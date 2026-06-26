@@ -30,6 +30,14 @@ def _setup_logging() -> logging.Logger:
 
     log_file = LOGS_DIR / f"analysis_{today_msk().strftime('%Y%m%d')}.log"
 
+    # На Windows консоль по умолчанию cp1251 → эмодзи/«→» в логах падают с
+    # UnicodeEncodeError. Принудительно UTF-8 (на Linux/CI уже UTF-8 — no-op).
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
