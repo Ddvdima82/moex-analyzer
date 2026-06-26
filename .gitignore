@@ -1,0 +1,39 @@
+# Секреты
+.env
+.env.*
+!.env.example
+
+# Сгенерированные артефакты
+reports/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.Python
+build/
+dist/
+*.egg-info/
+
+# Кэши инструментов
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE / ОС
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Служебное состояние оркестратора (не часть проекта)
+.omc/

@@ -1,0 +1,202 @@
+{
+  "SBER": {
+    "pe_ratio": 4.2,
+    "debt_ebitda": 0.0,
+    "roe_pct": 24.5,
+    "revenue_growth_yoy_pct": 12.3,
+    "net_margin_pct": 41.0,
+    "market_cap_bln_rub": 7100,
+    "sector": "banking",
+    "last_updated": "2026-06-01"
+  },
+  "LKOH": {
+    "pe_ratio": 5.1,
+    "debt_ebitda": 0.3,
+    "roe_pct": 21.0,
+    "revenue_growth_yoy_pct": 8.0,
+    "net_margin_pct": 12.5,
+    "market_cap_bln_rub": 5200,
+    "sector": "oil_gas",
+    "last_updated": "2026-06-01"
+  },
+  "GAZP": {
+    "pe_ratio": 3.1,
+    "debt_ebitda": 2.1,
+    "roe_pct": 8.5,
+    "revenue_growth_yoy_pct": -15.0,
+    "net_margin_pct": 6.0,
+    "market_cap_bln_rub": 3200,
+    "sector": "oil_gas",
+    "last_updated": "2026-06-01"
+  },
+  "NVTK": {
+    "pe_ratio": 9.8,
+    "debt_ebitda": 0.8,
+    "roe_pct": 18.0,
+    "revenue_growth_yoy_pct": 5.0,
+    "net_margin_pct": 22.0,
+    "market_cap_bln_rub": 3800,
+    "sector": "oil_gas",
+    "last_updated": "2026-06-01"
+  },
+  "GMKN": {
+    "pe_ratio": 7.5,
+    "debt_ebitda": 1.1,
+    "roe_pct": 30.0,
+    "revenue_growth_yoy_pct": 3.0,
+    "net_margin_pct": 28.0,
+    "market_cap_bln_rub": 1900,
+    "sector": "metals",
+    "last_updated": "2026-06-01"
+  },
+  "ROSN": {
+    "pe_ratio": 4.5,
+    "debt_ebitda": 1.5,
+    "roe_pct": 17.0,
+    "revenue_growth_yoy_pct": 6.0,
+    "net_margin_pct": 9.0,
+    "market_cap_bln_rub": 4500,
+    "sector": "oil_gas",
+    "last_updated": "2026-06-01"
+  },
+  "YDEX": {
+    "pe_ratio": 22.0,
+    "debt_ebitda": 0.5,
+    "roe_pct": 12.0,
+    "revenue_growth_yoy_pct": 38.0,
+    "net_margin_pct": 8.0,
+    "market_cap_bln_rub": 1400,
+    "sector": "tech",
+    "last_updated": "2026-06-01"
+  },
+  "TATN": {
+    "pe_ratio": 5.8,
+    "debt_ebitda": 0.1,
+    "roe_pct": 23.0,
+    "revenue_growth_yoy_pct": 7.5,
+    "net_margin_pct": 18.0,
+    "market_cap_bln_rub": 1600,
+    "sector": "oil_gas",
+    "last_updated": "2026-06-01"
+  },
+  "SNGS": {
+    "pe_ratio": 2.8,
+    "debt_ebitda": 0.0,
+    "roe_pct": 9.0,
+    "revenue_growth_yoy_pct": 4.0,
+    "net_margin_pct": 15.0,
+    "market_cap_bln_rub": 1100,
+    "sector": "oil_gas",
+    "last_updated": "2026-06-01"
+  },
+  "MTSS": {
+    "pe_ratio": 8.5,
+    "debt_ebitda": 1.8,
+    "roe_pct": 35.0,
+    "revenue_growth_yoy_pct": 10.0,
+    "net_margin_pct": 11.0,
+    "market_cap_bln_rub": 440,
+    "sector": "telecom",
+    "last_updated": "2026-06-01"
+  },
+  "MOEX": {
+    "pe_ratio": 7.2,
+    "debt_ebitda": 0.0,
+    "roe_pct": 20.0,
+    "revenue_growth_yoy_pct": 18.0,
+    "net_margin_pct": 48.0,
+    "market_cap_bln_rub": 270,
+    "sector": "finance",
+    "last_updated": "2026-06-01"
+  },
+  "MGNT": {
+    "pe_ratio": 28.0,
+    "debt_ebitda": 3.2,
+    "roe_pct": 4.0,
+    "revenue_growth_yoy_pct": 2.0,
+    "net_margin_pct": 0.8,
+    "market_cap_bln_rub": 210,
+    "sector": "retail",
+    "last_updated": "2026-06-01"
+  },
+  "PLZL": {
+    "pe_ratio": 11.0,
+    "debt_ebitda": 0.7,
+    "roe_pct": 50.0,
+    "revenue_growth_yoy_pct": 9.0,
+    "net_margin_pct": 35.0,
+    "market_cap_bln_rub": 2100,
+    "sector": "metals",
+    "last_updated": "2026-06-01"
+  },
+  "NLMK": {
+    "pe_ratio": 5.5,
+    "debt_ebitda": 0.4,
+    "roe_pct": 25.0,
+    "revenue_growth_yoy_pct": 5.0,
+    "net_margin_pct": 17.0,
+    "market_cap_bln_rub": 1100,
+    "sector": "metals",
+    "last_updated": "2026-06-01"
+  },
+  "CHMF": {
+    "pe_ratio": 6.0,
+    "debt_ebitda": 0.2,
+    "roe_pct": 30.0,
+    "revenue_growth_yoy_pct": 6.0,
+    "net_margin_pct": 20.0,
+    "market_cap_bln_rub": 1250,
+    "sector": "metals",
+    "last_updated": "2026-06-01"
+  },
+  "ALRS": {
+    "pe_ratio": 7.0,
+    "debt_ebitda": 0.6,
+    "roe_pct": 14.0,
+    "revenue_growth_yoy_pct": -8.0,
+    "net_margin_pct": 18.0,
+    "market_cap_bln_rub": 450,
+    "sector": "metals",
+    "last_updated": "2026-06-01"
+  },
+  "VTBR": {
+    "pe_ratio": 3.5,
+    "debt_ebitda": 0.0,
+    "roe_pct": 15.0,
+    "revenue_growth_yoy_pct": 8.0,
+    "net_margin_pct": 22.0,
+    "market_cap_bln_rub": 280,
+    "sector": "banking",
+    "last_updated": "2026-06-01"
+  },
+  "X5": {
+    "pe_ratio": 10.0,
+    "debt_ebitda": 1.0,
+    "roe_pct": 28.0,
+    "revenue_growth_yoy_pct": 22.0,
+    "net_margin_pct": 3.2,
+    "market_cap_bln_rub": 720,
+    "sector": "retail",
+    "last_updated": "2026-06-01"
+  },
+  "AFLT": {
+    "pe_ratio": 18.0,
+    "debt_ebitda": 4.5,
+    "roe_pct": 5.0,
+    "revenue_growth_yoy_pct": 15.0,
+    "net_margin_pct": 2.0,
+    "market_cap_bln_rub": 175,
+    "sector": "transport",
+    "last_updated": "2026-06-01"
+  },
+  "PIKK": {
+    "pe_ratio": 6.5,
+    "debt_ebitda": 2.0,
+    "roe_pct": 16.0,
+    "revenue_growth_yoy_pct": 5.0,
+    "net_margin_pct": 10.0,
+    "market_cap_bln_rub": 270,
+    "sector": "real_estate",
+    "last_updated": "2026-06-01"
+  }
+}

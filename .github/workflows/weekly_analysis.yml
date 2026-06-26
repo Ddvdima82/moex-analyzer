@@ -1,0 +1,48 @@
+name: Weekly MOEX Stock Analysis
+
+on:
+  schedule:
+    # Каждый понедельник в 06:00 UTC = 09:00 МСК
+    - cron: '0 6 * * 1'
+  workflow_dispatch:   # Ручной запуск для тестирования
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15   # Защита от зависания
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run analysis
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-logs
+          path: logs/
+          retention-days: 7
+
+      - name: Upload reports
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-reports
+          path: reports/
+          retention-days: 30
