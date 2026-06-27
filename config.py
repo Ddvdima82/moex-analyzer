@@ -7,6 +7,30 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, timedelta, timezone
 
+
+def _load_local_env() -> None:
+    """
+    Подхватывает .env рядом с config.py (KEY=VALUE) в окружение для локальных
+    запусков. Без зависимостей. Реальное окружение / GitHub Secrets имеют
+    приоритет (setdefault не перезаписывает уже заданные переменные).
+    """
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(env_path):
+        return
+    try:
+        with open(env_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+    except Exception:
+        pass
+
+
+_load_local_env()
+
 # Московское время (UTC+3, без перехода на летнее время с 2014).
 # CI GitHub Actions работает в UTC — без этого дата отчёта «съезжает» у полуночи.
 MSK = timezone(timedelta(hours=3))
