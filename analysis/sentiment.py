@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from typing import Any
 
 from config import (
@@ -20,11 +22,17 @@ from config import (
     CLAUDE_MODEL,
     CLAUDE_TIMEOUT,
     GEMINI_API_KEY,
+    GEMINI_CONCURRENCY,
+    GEMINI_MAX_RETRIES,
     GEMINI_MODEL,
+    GEMINI_RETRY_DELAY,
     SENTIMENT_PROVIDER,
 )
 
 logger = logging.getLogger(__name__)
+
+# Ограничитель одновременных вызовов Gemini (free-tier RPM-лимит)
+_GEMINI_SEM = threading.Semaphore(max(1, GEMINI_CONCURRENCY))
 
 # Шаблон промпта для сентимента
 SENTIMENT_PROMPT = """Ты финансовый аналитик российского рынка акций.
@@ -96,19 +104,38 @@ def _parse_sentiment_json(text: str, ticker: str) -> dict[str, Any]:
 
 
 def _gemini_search(prompt: str) -> str:
-    """Один вызов Gemini со встроенным поиском Google. Возвращает текст ответа."""
+    """
+    Один вызов Gemini со встроенным поиском Google. Возвращает текст ответа.
+    Ограничивает параллелизм (семафор) и ретраит 429 RESOURCE_EXHAUSTED с
+    экспоненциальным backoff — free-tier жёстко лимитирует RPM.
+    """
     from google import genai
-    from google.genai import types
+    from google.genai import errors, types
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    resp = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            tools=[types.Tool(google_search=types.GoogleSearch())],
-        ),
+    cfg = types.GenerateContentConfig(
+        tools=[types.Tool(google_search=types.GoogleSearch())],
     )
-    return resp.text or ""
+
+    with _GEMINI_SEM:
+        last_exc: Exception | None = None
+        for attempt in range(GEMINI_MAX_RETRIES):
+            try:
+                resp = client.models.generate_content(
+                    model=GEMINI_MODEL, contents=prompt, config=cfg,
+                )
+                return resp.text or ""
+            except errors.ClientError as exc:
+                # Ретраим только rate-limit (429); 403/400 — не наша вина, пробрасываем
+                if getattr(exc, "code", None) != 429:
+                    raise
+                last_exc = exc
+                if attempt < GEMINI_MAX_RETRIES - 1:
+                    delay = GEMINI_RETRY_DELAY * (2 ** attempt)
+                    logger.warning("Gemini 429 — повтор через %.0fс (попытка %d/%d)",
+                                   delay, attempt + 1, GEMINI_MAX_RETRIES)
+                    time.sleep(delay)
+        raise last_exc  # type: ignore[misc]
 
 
 def _analyze_gemini(ticker: str, company_name: str) -> dict[str, Any]:

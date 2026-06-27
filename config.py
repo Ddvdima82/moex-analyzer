@@ -117,6 +117,11 @@ SENTIMENT_PROVIDER: str = os.environ.get("SENTIMENT_PROVIDER", "gemini").lower()
 # Модель Gemini для сентимента (flash — дешёвый, есть бесплатный tier).
 # 2.5-flash: устоявшийся free-tier + grounding. Переопределяется GEMINI_MODEL.
 GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# Free-tier Gemini жёстко лимитирует RPM (особенно grounding). Ограничиваем
+# число одновременных вызовов и ретраим 429 с backoff, чтобы не ловить фолбэк.
+GEMINI_CONCURRENCY: int = int(os.environ.get("GEMINI_CONCURRENCY", "2"))
+GEMINI_MAX_RETRIES: int = int(os.environ.get("GEMINI_MAX_RETRIES", "4"))
+GEMINI_RETRY_DELAY: float = float(os.environ.get("GEMINI_RETRY_DELAY", "6"))
 
 CLAUDE_MODEL: str = "claude-sonnet-4-5"
 # Максимальное число токенов для ответа
