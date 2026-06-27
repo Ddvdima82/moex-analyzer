@@ -6,6 +6,17 @@ on:
     - cron: '0 6 * * 1'
   workflow_dispatch:   # Ручной запуск для тестирования
 
+# Нужно для публикации дашборда на GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Не запускать параллельные деплои Pages
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -23,6 +34,16 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      # История прогонов (SQLite) переживает запуски → копятся тренды и бэктест.
+      # restore-keys подхватывает последний кэш, key с run_id пишет новый.
+      - name: Restore run history
+        uses: actions/cache@v4
+        with:
+          path: data/history.db
+          key: moex-history-${{ github.run_id }}
+          restore-keys: |
+            moex-history-
 
       - name: Run analysis
         env:
@@ -46,3 +67,20 @@ jobs:
           name: analysis-reports
           path: reports/
           retention-days: 30
+
+      - name: Upload dashboard for Pages
+        if: success()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/
+
+  deploy:
+    needs: analyze
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy dashboard to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

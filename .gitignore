@@ -10,6 +10,9 @@ logs/
 *.sqlite
 *.sqlite3
 
+# Сгенерированный дашборд (CI пересобирает и публикует на Pages)
+docs/
+
 # Python
 __pycache__/
 *.py[cod]

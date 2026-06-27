@@ -17,6 +17,7 @@ pytest                            # run unit tests (tests/)
 pytest tests/test_scoring.py::test_target_price   # run a single test
 python backtest.py --ticker SBER  # walk-forward backtest of the technical pillar
 python backtest.py --horizon 28   # evaluate stored runs vs realized forward returns
+python dashboard.py               # rebuild docs/index.html from stored runs
 ```
 
 Tests live in [tests/](tests/) and are network-free (MOEX/Claude calls are monkeypatched). No linter or build step. Python 3.11 (matches CI). No virtualenv committed.
@@ -41,7 +42,7 @@ Pipeline orchestrated by [main.py](main.py) `run_pipeline()`: fetches fundamenta
 6. **Report** ([report/claude_report.py](report/claude_report.py)) — `generate_report` writes a Telegram-HTML analyst summary via Claude, with a programmatic `_fallback_report`. `format_full_table` renders the all-stocks table separately.
 7. **Delivery** ([report/telegram_bot.py](report/telegram_bot.py)) — splits messages at the 4096-char Telegram limit; `parse_mode=HTML` (only `<b>/<i>/<code>`, no markdown, no `<br>`).
 
-`main.py` `save_results()` writes `reports/analysis_YYYYMMDD.{json,md}`, persists per-ticker run rows to SQLite via [data/store.py](data/store.py) (`save_run`, idempotent per date — for future backtest), and logs go to `logs/analysis_YYYYMMDD.log`.
+`main.py` `save_results()` writes `reports/analysis_YYYYMMDD.{json,md}`, persists per-ticker run rows to SQLite via [data/store.py](data/store.py) (`save_run`, idempotent per date — for backtest), builds a self-contained HTML dashboard to `docs/index.html` via [dashboard.py](dashboard.py) (`build_dashboard` — latest run + SQLite trend history + backtest, embedded JSON + Chart.js, no server), and logs go to `logs/analysis_YYYYMMDD.log`. CI ([.github/workflows/weekly_analysis.yml](.github/workflows/weekly_analysis.yml)) caches `data/history.db` across runs (so trends/backtest accrue) and publishes `docs/` to GitHub Pages. `docs/` and `*.db` are gitignored (build artifacts).
 
 **Startup validation.** `main()` calls `config.validate_config()` first — a `ValueError` on broken `WEIGHTS` (must be non-negative and sum to 1.0) or `SIGNAL_THRESHOLDS` (SELL < BUY) aborts the run before producing wrong signals; missing API keys are non-fatal warnings. Run dates use `config.today_msk()` (UTC+3), since CI runs in UTC.
 

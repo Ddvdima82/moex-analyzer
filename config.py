@@ -108,6 +108,8 @@ FUNDAMENTALS_FILE: pathlib.Path = BASE_DIR / "data" / "fundamentals.json"
 FUNDAMENTALS_MAX_AGE_DAYS: int = 120
 # SQLite-хранилище истории прогонов (для будущего бэктеста)
 STORE_FILE: pathlib.Path = BASE_DIR / "data" / "history.db"
+# Самодостаточный HTML-дашборд (публикуется на GitHub Pages из docs/)
+DASHBOARD_FILE: pathlib.Path = BASE_DIR / "docs" / "index.html"
 
 # Создаём папки если не существуют
 REPORTS_DIR.mkdir(exist_ok=True)

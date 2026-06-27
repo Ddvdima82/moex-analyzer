@@ -215,11 +215,15 @@ def save_results(results: list[dict]) -> None:
     from config import REPORTS_DIR, today_msk
     from report.claude_report import format_full_table
     from data.store import save_run
+    from dashboard import build_dashboard
 
     today = today_msk().strftime("%Y%m%d")
 
     # SQLite (история прогонов для бэктеста); ошибки внутри не валят пайплайн
     save_run(results)
+
+    # HTML-дашборд (docs/index.html → GitHub Pages); тоже не валит пайплайн
+    build_dashboard(results)
 
     # JSON с сырыми данными
     json_path = REPORTS_DIR / f"analysis_{today}.json"
