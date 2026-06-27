@@ -114,8 +114,9 @@ RETRY_DELAY: int = 5       # секунд между попытками
 # ──────────────────────────────────────────────────────────────
 # Провайдер сентимент-анализа: gemini (дёшево, поиск Google) | anthropic | none
 SENTIMENT_PROVIDER: str = os.environ.get("SENTIMENT_PROVIDER", "gemini").lower()
-# Модель Gemini для сентимента (flash — дешёвый, есть бесплатный tier)
-GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+# Модель Gemini для сентимента (flash — дешёвый, есть бесплатный tier).
+# 2.5-flash: устоявшийся free-tier + grounding. Переопределяется GEMINI_MODEL.
+GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 CLAUDE_MODEL: str = "claude-sonnet-4-5"
 # Максимальное число токенов для ответа
