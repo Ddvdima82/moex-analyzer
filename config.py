@@ -46,6 +46,8 @@ def today_msk() -> date:
 ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
 TELEGRAM_BOT_TOKEN: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.environ.get("TELEGRAM_CHAT_ID", "")
+# Gemini (Google) — дешёвый сентимент со встроенным поиском. SDK читает GEMINI_API_KEY.
+GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
 
 # ──────────────────────────────────────────────────────────────
 # Топ-20 акций Мосбиржи (обновлять раз в квартал)
@@ -110,6 +112,11 @@ RETRY_DELAY: int = 5       # секунд между попытками
 # ──────────────────────────────────────────────────────────────
 # Claude API
 # ──────────────────────────────────────────────────────────────
+# Провайдер сентимент-анализа: gemini (дёшево, поиск Google) | anthropic | none
+SENTIMENT_PROVIDER: str = os.environ.get("SENTIMENT_PROVIDER", "gemini").lower()
+# Модель Gemini для сентимента (flash — дешёвый, есть бесплатный tier)
+GEMINI_MODEL: str = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+
 CLAUDE_MODEL: str = "claude-sonnet-4-5"
 # Максимальное число токенов для ответа
 CLAUDE_MAX_TOKENS: int = 4096
