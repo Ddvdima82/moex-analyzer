@@ -219,11 +219,15 @@ def save_results(results: list[dict]) -> None:
 
     today = today_msk().strftime("%Y%m%d")
 
-    # SQLite (история прогонов для бэктеста); ошибки внутри не валят пайплайн
-    save_run(results)
+    try:
+        save_run(results)
+    except Exception as exc:
+        logger.error("Ошибка сохранения в SQLite: %s", exc)
 
-    # HTML-дашборд (docs/index.html → GitHub Pages); тоже не валит пайплайн
-    build_dashboard(results)
+    try:
+        build_dashboard(results)
+    except Exception as exc:
+        logger.error("Ошибка построения дашборда: %s", exc)
 
     # JSON с сырыми данными
     json_path = REPORTS_DIR / f"analysis_{today}.json"

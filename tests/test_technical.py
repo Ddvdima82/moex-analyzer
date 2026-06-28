@@ -63,3 +63,37 @@ def test_compute_indicators_real_series():
     # При 250 точках SMA200 считается (раньше была всегда None из-за пагинации)
     assert ind["sma200"] is not None
     assert ind["above_sma200"] is True       # растущий ряд выше средней
+
+
+# ── Непрерывность RSI на границах 30/70 (регресс на исправление #4) ──────────
+
+def _ind(**kwargs):
+    base = _empty_indicators()
+    base.update(kwargs)
+    return base
+
+
+def test_rsi_no_jump_at_30():
+    """Разница скора при RSI=29.9 и RSI=30.1 менее 1 балла."""
+    assert abs(score_technical(_ind(rsi=29.9)) - score_technical(_ind(rsi=30.1))) < 1.0
+
+
+def test_rsi_no_jump_at_70():
+    """Разница скора при RSI=69.9 и RSI=70.1 менее 1 балла."""
+    assert abs(score_technical(_ind(rsi=69.9)) - score_technical(_ind(rsi=70.1))) < 1.0
+
+
+def test_rsi_midpoint_between_extremes():
+    s_low = score_technical(_ind(rsi=30.0))
+    s_mid = score_technical(_ind(rsi=50.0))
+    s_high = score_technical(_ind(rsi=70.0))
+    assert s_high < s_mid < s_low
+
+
+# ── Непрерывность 52w при RSI=50 (регресс на исправление #5) ─────────────────
+
+def test_52w_no_jump_at_rsi50():
+    """Разница скора при RSI=49.9 и RSI=50.1 с position=0.5 менее 0.5 балла."""
+    s_below = score_technical(_ind(rsi=49.9, position_52w=0.5))
+    s_above = score_technical(_ind(rsi=50.1, position_52w=0.5))
+    assert abs(s_below - s_above) < 0.5

@@ -123,7 +123,7 @@ GEMINI_CONCURRENCY: int = int(os.environ.get("GEMINI_CONCURRENCY", "2"))
 GEMINI_MAX_RETRIES: int = int(os.environ.get("GEMINI_MAX_RETRIES", "4"))
 GEMINI_RETRY_DELAY: float = float(os.environ.get("GEMINI_RETRY_DELAY", "6"))
 
-CLAUDE_MODEL: str = "claude-sonnet-4-5"
+CLAUDE_MODEL: str = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
 # Максимальное число токенов для ответа
 CLAUDE_MAX_TOKENS: int = 4096
 # Таймаут запроса (сек) и число повторов. SDK сам ретраит 429/5xx с backoff.

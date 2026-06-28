@@ -62,3 +62,36 @@ def test_score_fundamental_bounds():
                       net_margin_pct=1.0, revenue_growth_yoy_pct=-10.0, div_yield_pct=0.0)
     good = _good_entry(div_yield_pct=12.0)
     assert score_fundamental(bad, medians) <= score_fundamental(good, medians)
+
+
+# ── P/E отрицательный и нулевой (регресс на исправление #1) ──────────────────
+
+def test_pe_negative_gives_zero_contribution():
+    """Убыточная компания (P/E < 0) не получает бонус за PE."""
+    medians = {"banking": {"pe": 8.0, "roe": 15.0}}
+    score_neg = score_fundamental(_good_entry(pe_ratio=-5.0, div_yield_pct=0.0), medians)
+    score_pos = score_fundamental(_good_entry(pe_ratio=4.0, div_yield_pct=0.0), medians)
+    assert score_neg < score_pos
+
+
+def test_pe_none_gives_zero_contribution():
+    """Нет данных P/E → вклад PE = 0, не использует fallback 8.0."""
+    medians = {"banking": {"pe": 8.0, "roe": 15.0}}
+    entry_none = _good_entry(div_yield_pct=0.0)
+    entry_none["pe_ratio"] = None
+    entry_good = _good_entry(pe_ratio=4.0, div_yield_pct=0.0)
+    assert score_fundamental(entry_none, medians) < score_fundamental(entry_good, medians)
+
+
+def test_pe_zero_gives_zero_contribution():
+    medians = {"banking": {"pe": 8.0, "roe": 15.0}}
+    entry = _good_entry(pe_ratio=0.0, div_yield_pct=0.0)
+    entry_good = _good_entry(pe_ratio=4.0, div_yield_pct=0.0)
+    assert score_fundamental(entry, medians) < score_fundamental(entry_good, medians)
+
+
+def test_negative_roe_clamped_to_zero():
+    """Отрицательный ROE не даёт отрицательного вклада — просто 0."""
+    medians = {"banking": {"pe": 8.0, "roe": 15.0}}
+    s = score_fundamental(_good_entry(roe_pct=-30.0, div_yield_pct=0.0), medians)
+    assert s >= 0.0

@@ -190,15 +190,16 @@ def score_technical(indicators: dict) -> float:
     """
     score = 0.0
 
-    # 1. RSI (вес 25)
+    # 1. RSI (вес 25) — непрерывная линейная функция без разрывов на границах
+    # RSI ≤ 30 (перепродан) → 1.0; RSI ≥ 70 (перекуплен) → 0.0; между — линейно
     rsi = indicators.get("rsi", 50.0)
-    if rsi < 30:
-        rsi_score = 1.0       # перепродан = сигнал покупки
-    elif rsi > 70:
-        rsi_score = 0.0       # перекуплен = сигнал продажи
+    if rsi <= 30:
+        rsi_score = 1.0
+    elif rsi >= 70:
+        rsi_score = 0.0
     else:
-        rsi_score = 1 - abs(rsi - 45) / 35  # ближе к 45 = лучше
-    score += 25 * max(0.0, min(rsi_score, 1.0))
+        rsi_score = (70.0 - rsi) / 40.0
+    score += 25 * rsi_score
 
     # 2. SMA-тренд (вес 25)
     sma_score = 0.0
@@ -220,13 +221,14 @@ def score_technical(indicators: dict) -> float:
     vol_norm = (min(max(vol_trend / 30, -1), 1) + 1) / 2  # нормализация 0-1
     score += 15 * vol_norm
 
-    # 5. Позиция в 52w (вес 15)
+    # 5. Позиция в 52w (вес 15) — плавное смешение контрарного и моментум-режима
+    # При низком RSI ценим близость к лоу (отскок), при высоком — к хаю (моментум).
+    # rsi_weight плавно переходит от 0 (RSI=0) к 1 (RSI=100) → нет разрыва на RSI=50.
     position = indicators.get("position_52w", 0.5)
-    # Ближе к низу + RSI не падает → потенциал отскока
-    if rsi < 50:
-        range_score = 1 - position  # на лоу = хорошо
-    else:
-        range_score = position * 0.5  # на хае при высоком RSI — сдержанно
+    rsi_weight = rsi / 100.0
+    contrarian = 1.0 - position        # близость к лоу хороша при слабом RSI
+    momentum = position * 0.5          # близость к хаю хороша при сильном RSI (сдержанно)
+    range_score = contrarian * (1.0 - rsi_weight) + momentum * rsi_weight
     score += 15 * min(max(range_score, 0.0), 1.0)
 
     return round(score, 1)

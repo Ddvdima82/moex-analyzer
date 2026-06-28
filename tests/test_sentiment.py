@@ -33,12 +33,24 @@ def test_parse_empty():
 # ── Диспетчер провайдеров ────────────────────────────────────
 
 def test_dispatch_gemini(monkeypatch):
+    import data.news as news_mod
     monkeypatch.setattr(sent, "SENTIMENT_PROVIDER", "gemini")
     monkeypatch.setattr(sent, "GEMINI_API_KEY", "fake-key")
-    monkeypatch.setattr(sent, "_gemini_search",
+    monkeypatch.setattr(news_mod, "fetch_headlines",
+                        lambda t, c, **kw: [news_mod.Headline("Сбер отчёт", "2025-06-20")])
+    monkeypatch.setattr(sent, "_gemini_classify",
                         lambda p: '{"sentiment_score": 75, "overall_sentiment": "positive", "key_event": "рост"}')
     d = sent.analyze_sentiment("SBER", "Сбербанк")
     assert d["sentiment_score"] == 75 and d.get("error") is None
+
+
+def test_dispatch_gemini_no_headlines(monkeypatch):
+    import data.news as news_mod
+    monkeypatch.setattr(sent, "SENTIMENT_PROVIDER", "gemini")
+    monkeypatch.setattr(sent, "GEMINI_API_KEY", "fake-key")
+    monkeypatch.setattr(news_mod, "fetch_headlines", lambda t, c, **kw: [])
+    d = sent.analyze_sentiment("SBER", "Сбербанк")
+    assert d["sentiment_score"] == 50 and "найдено" in d["error"]
 
 
 def test_dispatch_gemini_no_key(monkeypatch):
@@ -49,10 +61,13 @@ def test_dispatch_gemini_no_key(monkeypatch):
 
 
 def test_dispatch_gemini_error_falls_back(monkeypatch):
+    import data.news as news_mod
     monkeypatch.setattr(sent, "SENTIMENT_PROVIDER", "gemini")
     monkeypatch.setattr(sent, "GEMINI_API_KEY", "fake-key")
+    monkeypatch.setattr(news_mod, "fetch_headlines",
+                        lambda t, c, **kw: [news_mod.Headline("тест", "")])
     def boom(p): raise RuntimeError("сеть упала")
-    monkeypatch.setattr(sent, "_gemini_search", boom)
+    monkeypatch.setattr(sent, "_gemini_classify", boom)
     d = sent.analyze_sentiment("SBER", "Сбербанк")
     assert d["sentiment_score"] == 50 and d["error"]
 
@@ -77,4 +92,10 @@ def test_score_sentiment_penalty_no_news():
 
 
 def test_score_sentiment_with_news():
-    assert sent.score_sentiment({"sentiment_score": 72, "positive_count": 3, "negative_count": 1}) == 72.0
+    data = {
+        "sentiment_score": 72,
+        "positive_count": 3,
+        "negative_count": 1,
+        "news": [{"headline": "рост", "sentiment": "positive", "impact": "high"}],
+    }
+    assert sent.score_sentiment(data) == 72.0

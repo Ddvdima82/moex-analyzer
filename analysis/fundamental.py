@@ -10,7 +10,7 @@ import logging
 from datetime import date, datetime
 from typing import Any
 
-from config import FUNDAMENTALS_FILE, FUNDAMENTALS_MAX_AGE_DAYS
+from config import FUNDAMENTALS_FILE, FUNDAMENTALS_MAX_AGE_DAYS, today_msk
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def _validate_entry(ticker: str, data: Any) -> bool:
     last = data.get("last_updated")
     if last:
         try:
-            age = (date.today() - datetime.strptime(last, "%Y-%m-%d").date()).days
+            age = (today_msk() - datetime.strptime(last, "%Y-%m-%d").date()).days
             if age > FUNDAMENTALS_MAX_AGE_DAYS:
                 logger.warning(
                     "fundamentals[%s]: данные устарели (%d дн., last_updated=%s)",
@@ -132,9 +132,13 @@ def score_fundamental(data: dict[str, Any], sector_medians: dict[str, dict[str, 
 
     # 1. P/E (вес 20) — чем ниже относительно медианы по сектору, тем лучше
     sector_pe = sector_medians.get(sector, {}).get("pe", 8.0)
-    pe_ratio = max(float(data.get("pe_ratio") or 8.0), 0.1)
-    # Нормировка: PE/sectorPE. Если 0.5 × сектор = отлично (1.0), если 1.5 × = плохо
-    pe_score = max(0.0, 1.0 - (pe_ratio / sector_pe - 0.5))
+    pe_raw = data.get("pe_ratio")
+    if pe_raw is None or float(pe_raw) <= 0:
+        # Отрицательный P/E = убыток; нет данных = неизвестность → минимальный скор
+        pe_score = 0.0
+    else:
+        pe_ratio = float(pe_raw)
+        pe_score = max(0.0, 1.0 - (pe_ratio / sector_pe - 0.5))
     score += 20 * min(pe_score, 1.0)
 
     # 2. Долг/EBITDA (вес 20) — идеал < 1x, красный флаг > 3x

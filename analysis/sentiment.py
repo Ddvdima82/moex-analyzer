@@ -1,7 +1,7 @@
 """
 Сентимент-анализ новостей по компании. Провайдер выбирается в конфиге
 SENTIMENT_PROVIDER:
-  • gemini    — Google Gemini со встроенным поиском (дёшево, есть free tier);
+  • gemini    — Gemini анализирует заголовки из RSS (бесплатно, без grounding-квоты);
   • anthropic — Claude с web_search (дороже);
   • none      — сентимент отключён (нейтральный, без трат).
 
@@ -31,10 +31,36 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-# Ограничитель одновременных вызовов Gemini (free-tier RPM-лимит)
+# Ограничитель параллелизма (для Anthropic-провайдера; Gemini без grounding терпим)
 _GEMINI_SEM = threading.Semaphore(max(1, GEMINI_CONCURRENCY))
 
-# Шаблон промпта для сентимента
+# Промпт для Gemini: классифицируем готовые заголовки, grounding НЕ нужен
+_GEMINI_PROMPT = """Ты финансовый аналитик российского рынка акций.
+
+Ниже — заголовки новостей за последние 7 дней о компании {company_name} (тикер {ticker}):
+
+{headlines}
+
+Оцени каждую новость как positive / neutral / negative.
+Учитывай: финансовые отчёты, дивиденды, корпоративные события, санкции, регуляторику, операционные новости.
+
+Верни ТОЛЬКО валидный JSON без markdown-блоков:
+{{
+  "news": [
+    {{"headline": "...", "sentiment": "positive", "impact": "high"}},
+    {{"headline": "...", "sentiment": "neutral", "impact": "low"}}
+  ],
+  "positive_count": 3,
+  "negative_count": 1,
+  "neutral_count": 2,
+  "overall_sentiment": "positive",
+  "key_event": "Краткое описание главного события недели (1 предложение)",
+  "sentiment_score": 65
+}}
+
+sentiment_score: от 0 (очень негативно) до 100 (очень позитивно), 50 = нейтрально."""
+
+# Промпт для Anthropic (с web_search)
 SENTIMENT_PROMPT = """Ты финансовый аналитик российского рынка акций.
 
 Используй инструмент web_search и найди последние 5-7 новостей о компании \
@@ -80,11 +106,24 @@ def _parse_sentiment_json(text: str, ticker: str) -> dict[str, Any]:
     if not text:
         return _neutral_result(ticker, "пустой ответ модели")
 
-    # Берём сбалансированный {...} блок (жадный поиск может захватить лишнее)
     start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    if start == -1:
         logger.warning("Нет JSON в ответе для %s: %s", ticker, text[:200])
+        return _neutral_result(ticker, "JSON не найден в ответе")
+
+    # Балансируем скобки чтобы не захватить мусор после JSON
+    depth = 0
+    end = -1
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+    if end == -1:
+        logger.warning("Незакрытый JSON для %s: %s", ticker, text[:200])
         return _neutral_result(ticker, "JSON не найден в ответе")
 
     try:
@@ -103,30 +142,26 @@ def _parse_sentiment_json(text: str, ticker: str) -> dict[str, Any]:
     return data
 
 
-def _gemini_search(prompt: str) -> str:
+def _gemini_classify(prompt: str) -> str:
     """
-    Один вызов Gemini со встроенным поиском Google. Возвращает текст ответа.
-    Ограничивает параллелизм (семафор) и ретраит 429 RESOURCE_EXHAUSTED с
-    экспоненциальным backoff — free-tier жёстко лимитирует RPM.
+    Вызов Gemini БЕЗ grounding — классифицирует готовый текст.
+    Без grounding free-tier лимит ~1500 RPM (vs ~15 для grounded).
+    Семафор оставляем для защиты от пиков; backoff на 429 сохраняем.
     """
     from google import genai
-    from google.genai import errors, types
+    from google.genai import errors
 
     client = genai.Client(api_key=GEMINI_API_KEY)
-    cfg = types.GenerateContentConfig(
-        tools=[types.Tool(google_search=types.GoogleSearch())],
-    )
 
     with _GEMINI_SEM:
         last_exc: Exception | None = None
         for attempt in range(GEMINI_MAX_RETRIES):
             try:
                 resp = client.models.generate_content(
-                    model=GEMINI_MODEL, contents=prompt, config=cfg,
+                    model=GEMINI_MODEL, contents=prompt,
                 )
                 return resp.text or ""
             except errors.ClientError as exc:
-                # Ретраим только rate-limit (429); 403/400 — не наша вина, пробрасываем
                 if getattr(exc, "code", None) != 429:
                     raise
                 last_exc = exc
@@ -142,9 +177,20 @@ def _analyze_gemini(ticker: str, company_name: str) -> dict[str, Any]:
     if not GEMINI_API_KEY:
         logger.warning("GEMINI_API_KEY не задан — нейтральный сентимент для %s", ticker)
         return _neutral_result(ticker, "нет GEMINI-ключа")
+
+    from data.news import fetch_headlines
+    headlines = fetch_headlines(ticker, company_name)
+
+    if not headlines:
+        logger.info("Нет новостей для %s — нейтральный сентимент", ticker)
+        return _neutral_result(ticker, "новостей не найдено")
+
+    headlines_text = "\n".join(f"- {h.title}" for h in headlines)
     try:
-        prompt = SENTIMENT_PROMPT.format(company_name=company_name, ticker=ticker)
-        return _parse_sentiment_json(_gemini_search(prompt), ticker)
+        prompt = _GEMINI_PROMPT.format(
+            company_name=company_name, ticker=ticker, headlines=headlines_text,
+        )
+        return _parse_sentiment_json(_gemini_classify(prompt), ticker)
     except Exception as exc:
         logger.error("Ошибка Gemini-сентимента %s: %s", ticker, exc, exc_info=True)
         return _neutral_result(ticker, str(exc)[:100])
@@ -206,10 +252,8 @@ def score_sentiment(sentiment_data: dict[str, Any]) -> float:
     """
     base_score = float(sentiment_data.get("sentiment_score", 50))
 
-    # Если нет новостей совсем — небольшой штраф за неизвестность
-    pos = sentiment_data.get("positive_count", 0) or 0
-    neg = sentiment_data.get("negative_count", 0) or 0
-    if pos + neg == 0:
+    # Штраф только если новостей нет совсем (нейтральные — это тоже данные)
+    if not sentiment_data.get("news"):
         base_score = max(base_score - 10, 0)
 
     return round(base_score, 1)

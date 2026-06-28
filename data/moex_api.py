@@ -21,6 +21,7 @@ from config import (
     REQUEST_TIMEOUT,
     RETRY_COUNT,
     RETRY_DELAY,
+    today_msk,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,8 +87,13 @@ def get_current_quotes(tickers: list[str]) -> dict[str, dict[str, Any]]:
         # Нужные поля и их индексы
         col_idx = {col: i for i, col in enumerate(columns)}
 
+        secid_idx = col_idx.get("SECID")
+        if secid_idx is None:
+            logger.error("Нет колонки SECID в ответе MOEX — разбор котировок невозможен")
+            return result
+
         for row in rows:
-            ticker = row[col_idx.get("SECID", 0)]
+            ticker = row[secid_idx]
             if ticker not in tickers:
                 continue
 
@@ -137,7 +143,7 @@ def get_history(ticker: str, days: int = 260) -> pd.DataFrame:
     """
     # ~365 календарных дней ≈ 252 торговых; берём с запасом под нужное число дней
     calendar_days = int(days * 1.6) + 60
-    from_date = (date.today() - timedelta(days=calendar_days)).strftime("%Y-%m-%d")
+    from_date = (today_msk() - timedelta(days=calendar_days)).strftime("%Y-%m-%d")
     url = (
         f"{MOEX_BASE_URL}/history/engines/stock/markets/shares"
         f"/boards/{MOEX_BOARD}/securities/{ticker}.json"
