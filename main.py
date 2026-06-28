@@ -171,8 +171,13 @@ def run_pipeline() -> list[dict]:
             continue
         worklist.append((ticker, COMPANY_NAMES.get(ticker, ticker), price))
 
-    # 4. Параллельная обработка
-    logger.info("=== ШАГ 3: Анализ %d тикеров (%d воркеров) ===", len(worklist), TICKER_MAX_WORKERS)
+    # 4. Батч-сентимент: один вызов Gemini для всех тикеров до параллельной обработки
+    logger.info("=== ШАГ 3: Батч-сентимент ===")
+    from analysis.sentiment import batch_analyze_sentiment
+    batch_analyze_sentiment([(t, name) for t, name, _ in worklist])
+
+    # 5. Параллельная обработка (сентимент берётся из кэша — API не вызывается)
+    logger.info("=== ШАГ 4: Анализ %d тикеров (%d воркеров) ===", len(worklist), TICKER_MAX_WORKERS)
     results: list[dict] = []
     summary = {"tech_fallback": 0, "fund_neutral": 0, "sent_fallback": 0, "errors": 0}
 

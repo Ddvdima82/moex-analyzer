@@ -1,5 +1,12 @@
 """Тесты сентимент-провайдеров и парсинга (analysis/sentiment.py)."""
+import pytest
 import analysis.sentiment as sent
+
+
+@pytest.fixture(autouse=True)
+def clear_sentiment_cache(monkeypatch):
+    """Сбрасывает кэш батч-сентимента перед каждым тестом."""
+    monkeypatch.setattr(sent, "_SENTIMENT_CACHE", {})
 
 
 # ── Парсинг JSON ─────────────────────────────────────────────
