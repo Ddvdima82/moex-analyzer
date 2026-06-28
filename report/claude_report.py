@@ -15,6 +15,7 @@ from config import (
     CLAUDE_MAX_TOKENS,
     CLAUDE_MODEL,
     CLAUDE_TIMEOUT,
+    USE_CLAUDE_REPORT,
     today_msk,
 )
 
@@ -49,8 +50,8 @@ def generate_report(scored_stocks: list[dict[str, Any]]) -> str:
     Генерирует текстовую часть отчёта через Claude.
     При ошибке — возвращает программно сформированный fallback.
     """
-    if not ANTHROPIC_API_KEY:
-        logger.warning("ANTHROPIC_API_KEY не задан — используем программный отчёт")
+    if not USE_CLAUDE_REPORT or not ANTHROPIC_API_KEY:
+        logger.info("Claude-отчёт отключён (USE_CLAUDE_REPORT=false или нет ключа) — программный отчёт")
         return _fallback_report(scored_stocks)
 
     try:
@@ -165,6 +166,6 @@ def format_full_table(scored_stocks: list[dict[str, Any]]) -> str:
         table_lines.append(line)
 
     table_lines.append("</code>")
-    footer = "\n\n⚠️ <i>Не является инвестиционной рекомендацией.</i>\n🤖 Claude Sonnet | Данные: MOEX ISS API"
+    footer = "\n\n⚠️ <i>Не является инвестиционной рекомендацией.</i>\n🤖 Данные: MOEX ISS API"
 
     return header + "\n".join(table_lines) + footer
