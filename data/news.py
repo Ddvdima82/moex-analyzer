@@ -22,6 +22,9 @@ _RSS_FEEDS = [
     "https://tass.ru/rss/v2.xml",
     "https://www.vedomosti.ru/rss/news",
     "https://www.kommersant.ru/RSS/news.xml",
+    "https://1prime.ru/rss",
+    "https://www.finam.ru/analysis/newsitem/rss/",
+    "https://bcs-express.ru/rss",
 ]
 
 _REQUEST_TIMEOUT = 10  # сек
