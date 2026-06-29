@@ -48,6 +48,7 @@ TELEGRAM_BOT_TOKEN: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.environ.get("TELEGRAM_CHAT_ID", "")
 # Gemini (Google) — дешёвый сентимент со встроенным поиском. SDK читает GEMINI_API_KEY.
 GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
+GEMINI_PROXY: str = os.environ.get("GEMINI_PROXY", "")
 
 # ──────────────────────────────────────────────────────────────
 # Топ-20 акций Мосбиржи (обновлять раз в квартал)

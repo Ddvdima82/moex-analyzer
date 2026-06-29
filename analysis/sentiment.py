@@ -27,6 +27,7 @@ from config import (
     GEMINI_CONCURRENCY,
     GEMINI_MAX_RETRIES,
     GEMINI_MODEL,
+    GEMINI_PROXY,
     GEMINI_RETRY_DELAY,
     SENTIMENT_PROVIDER,
 )
@@ -283,9 +284,13 @@ def _gemini_classify(prompt: str) -> str:
     Без grounding free-tier лимит ~1500 RPM (vs ~15 для grounded).
     Семафор оставляем для защиты от пиков; backoff на 429 сохраняем.
     """
+    import os
     from google import genai
     from google.genai import errors
 
+    if GEMINI_PROXY:
+        os.environ.setdefault("HTTPS_PROXY", GEMINI_PROXY)
+        os.environ.setdefault("HTTP_PROXY", GEMINI_PROXY)
     client = genai.Client(api_key=GEMINI_API_KEY)
 
     with _GEMINI_SEM:
