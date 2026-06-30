@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 
+import math
+
 import numpy as np
 import pandas as pd
 
@@ -211,9 +213,10 @@ def score_technical(indicators: dict) -> float:
         sma_score += 0.2
     score += 25 * min(sma_score, 1.0)
 
-    # 3. MACD гистограмма (вес 20)
+    # 3. MACD гистограмма (вес 20) — градуальная нормализация через atan.
+    # Нулевой MACD → 0.5; положительный → к 1.0; отрицательный → к 0.0.
     macd_hist = indicators.get("macd_histogram", 0.0)
-    macd_score = 1.0 if macd_hist > 0 else 0.0
+    macd_score = math.atan(macd_hist / 0.5) / math.pi + 0.5
     score += 20 * macd_score
 
     # 4. Объём (вес 15)

@@ -139,7 +139,7 @@ def _process_ticker(
     return result, meta
 
 
-def run_pipeline() -> list[dict]:
+def run_pipeline() -> tuple[list[dict], dict]:
     """
     Выполняет полный цикл анализа и возвращает список результатов
     по каждой акции, отсортированных по убыванию final_score.

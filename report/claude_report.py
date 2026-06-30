@@ -31,15 +31,18 @@ REPORT_PROMPT = """Ты опытный аналитик инвестиционн
 
 {scored_stocks_json}
 
+Макроэкономический контекст:
+{macro_context}
+
 Сформируй читаемый аналитический отчёт для Telegram:
 
-1. Одна строка о состоянии рынка (РАСТУЩИЙ / НЕЙТРАЛЬНЫЙ / ПАДАЮЩИЙ) и IMOEX
-2. Краткий комментарий о рынке в целом (2-3 предложения)  
+1. Одна строка о состоянии рынка (РАСТУЩИЙ / НЕЙТРАЛЬНЫЙ / ПАДАЮЩИЙ) с реальным значением IMOEX
+2. Краткий комментарий о рынке с учётом макроконтекста: ставка ЦБ, нефть, курс рубля (2-3 предложения)
 3. Топ-3 на покупку с обоснованием (по одному абзацу)
 4. Топ-3 на продажу / избегать с обоснованием
 5. НЕ включай полную таблицу — она будет добавлена отдельно
 
-Стиль: профессиональный, конкретный, без воды и воды.
+Стиль: профессиональный, конкретный, без воды.
 Язык: русский.
 Формат: Telegram HTML (только теги <b>, <i>, <code>, без <br>, без markdown).
 Максимум 2500 символов."""
@@ -77,10 +80,27 @@ def generate_report(scored_stocks: list[dict[str, Any]], macro: dict | None = No
             for s in scored_stocks
         ]
 
+        macro_parts = []
+        if macro:
+            if macro.get("imoex") is not None:
+                macro_parts.append(f"IMOEX={macro['imoex']:,.0f}")
+            if macro.get("usd_rub") is not None:
+                macro_parts.append(f"USD/RUB={macro['usd_rub']:.2f}")
+            if macro.get("cny_rub") is not None:
+                macro_parts.append(f"CNY/RUB={macro['cny_rub']:.2f}")
+            if macro.get("cbr_rate") is not None:
+                macro_parts.append(f"Ставка ЦБ={macro['cbr_rate']:.1f}%")
+            if macro.get("rgbi") is not None:
+                macro_parts.append(f"RGBI={macro['rgbi']:.2f}")
+            if macro.get("brent") is not None:
+                macro_parts.append(f"Brent=${macro['brent']:.1f}")
+        macro_context = ", ".join(macro_parts) if macro_parts else "данные недоступны"
+
         prompt = REPORT_PROMPT.format(
             count=len(scored_stocks),
             date=today_msk().strftime("%d.%m.%Y"),
             scored_stocks_json=json.dumps(summary, ensure_ascii=False, indent=2),
+            macro_context=macro_context,
         )
 
         client = anthropic.Anthropic(

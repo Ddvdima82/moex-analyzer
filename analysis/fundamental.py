@@ -130,16 +130,18 @@ def score_fundamental(data: dict[str, Any], sector_medians: dict[str, dict[str, 
     score = 0.0
     sector = data.get("sector", "unknown")
 
-    # 1. P/E (вес 20) — чем ниже относительно медианы по сектору, тем лучше
+    # 1. P/E (вес 20) — чем ниже относительно медианы по сектору, тем лучше.
+    # Формула: (3 - ratio) / 2.5, где ratio = pe / медиана.
+    # Медиана → 0.8; вдвое ниже медианы → 1.0; втрое выше → 0.0.
     sector_pe = sector_medians.get(sector, {}).get("pe", 8.0)
     pe_raw = data.get("pe_ratio")
     if pe_raw is None or float(pe_raw) <= 0:
         # Отрицательный P/E = убыток; нет данных = неизвестность → минимальный скор
         pe_score = 0.0
     else:
-        pe_ratio = float(pe_raw)
-        pe_score = max(0.0, 1.0 - (pe_ratio / sector_pe - 0.5))
-    score += 20 * min(pe_score, 1.0)
+        ratio = float(pe_raw) / sector_pe
+        pe_score = max(0.0, min(1.0, (3.0 - ratio) / 2.5))
+    score += 20 * pe_score
 
     # 2. Долг/EBITDA (вес 20) — идеал < 1x, красный флаг > 3x
     debt = float(data.get("debt_ebitda") or 0.0)

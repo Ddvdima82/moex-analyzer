@@ -25,12 +25,12 @@ def test_compute_final_score_weights():
 
 
 def test_get_signal_thresholds():
-    assert get_signal(70) == "BUY"
+    assert get_signal(60) == "BUY"
     assert get_signal(85) == "BUY"
-    assert get_signal(69.9) == "HOLD"
+    assert get_signal(59.9) == "HOLD"
     assert get_signal(50) == "HOLD"
-    assert get_signal(31) == "HOLD"
-    assert get_signal(30) == "SELL"
+    assert get_signal(36) == "HOLD"
+    assert get_signal(35) == "SELL"
     assert get_signal(10) == "SELL"
 
 

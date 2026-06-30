@@ -39,8 +39,10 @@ def test_run_pipeline_orchestration(monkeypatch):
         return result, meta
 
     monkeypatch.setattr(main, "_process_ticker", fake_process)
+    import data.macro as macro_mod
+    monkeypatch.setattr(macro_mod, "fetch_macro", lambda: {})
 
-    results = main.run_pipeline()
+    results, macro = main.run_pipeline()
     assert [r["ticker"] for r in results] == ["SBER", "GAZP"]   # отсортировано по баллу
     assert len(results) == 2
 
@@ -61,7 +63,9 @@ def test_run_pipeline_handles_worker_exception(monkeypatch):
         return result, {"tech_fallback": False, "fund_neutral": False, "sent_fallback": False}
 
     monkeypatch.setattr(main, "_process_ticker", fake_process)
+    import data.macro as macro_mod
+    monkeypatch.setattr(macro_mod, "fetch_macro", lambda: {})
 
     # Падение одного тикера не валит весь прогон
-    results = main.run_pipeline()
+    results, macro = main.run_pipeline()
     assert [r["ticker"] for r in results] == ["SBER"]
