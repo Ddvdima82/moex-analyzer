@@ -236,6 +236,32 @@ def get_dividends(ticker: str) -> list[dict[str, Any]]:
         return []
 
 
+def get_upcoming_dividends(tickers: list[str]) -> dict[str, dict[str, Any]]:
+    """
+    Ближайшая объявленная дивидендная отсечка (registryclosedate ≥ сегодня)
+    для каждого тикера. 1 API-вызов на тикер, параллельно.
+    Возвращает: {"SBER": {"ex_date": "2025-07-15", "amount": 33.3}, ...}
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    today_str = date.today().strftime("%Y-%m-%d")
+
+    def _fetch(ticker: str) -> tuple[str, dict | None]:
+        for d in get_dividends(ticker):
+            ex_dt = d.get("registryclosedate") or ""
+            if ex_dt >= today_str:
+                return ticker, {"ex_date": ex_dt, "amount": d.get("value")}
+        return ticker, None
+
+    result: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for ticker, info in ex.map(_fetch, tickers):
+            if info:
+                result[ticker] = info
+    logger.info("Предстоящие дивиденды: %d из %d тикеров", len(result), len(tickers))
+    return result
+
+
 def calc_div_yield(ticker: str, current_price: float) -> float:
     """
     Рассчитывает дивидендную доходность за последние 12 месяцев в %.

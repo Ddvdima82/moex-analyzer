@@ -56,6 +56,8 @@ def _latest_from_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "sector": fund.get("sector"),
             "sentiment": sent.get("overall"),
             "key_event": sent.get("key_event"),
+            "ex_date": fund.get("ex_date"),
+            "next_div": fund.get("next_div_amount"),
         })
     return out
 
@@ -301,6 +303,9 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <div class="sec" id="btSec" style="display:none">Бэктест сигналов</div>
   <div class="panel" id="btPanel" style="display:none"></div>
 
+  <div class="sec" id="divCalSec" style="display:none">Дивидендный календарь</div>
+  <div class="panel" id="divCalPanel" style="display:none"></div>
+
   <div class="sec">Текущий прогон</div>
   <div class="toolbar">
     <input id="q" placeholder="Поиск по тикеру/компании…" style="flex:1;min-width:180px">
@@ -433,6 +438,27 @@ draw();
     ${cell('BUY',bs.BUY)}${cell('SELL',bs.SELL)}</div>`;
 })();
 
+// Дивидендный календарь
+(function(){
+  const cal = DATA.latest.filter(x=>x.ex_date).sort((a,b)=>a.ex_date>b.ex_date?1:-1);
+  if(!cal.length) return;
+  document.getElementById('divCalSec').style.display='';
+  const p=document.getElementById('divCalPanel'); p.style.display='';
+  const today=new Date().toISOString().slice(0,10);
+  p.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">'+
+    cal.map(x=>{
+      const soon=x.ex_date<=new Date(Date.now()+14*864e5).toISOString().slice(0,10);
+      const amt=x.next_div!=null?` · ${fmt(x.next_div,2)} ₽`:'';
+      const yld=x.div_yield!=null?` · ${fmt(x.div_yield,1)}% доходн.`:'';
+      return `<div class="card" style="${soon?'border-color:#f59e0b':''}">
+        <div style="font-size:13px;color:var(--muted)">${x.ex_date}</div>
+        <div style="font-weight:650;margin:3px 0">${x.ticker}</div>
+        <div style="font-size:13px;color:var(--muted)">${x.company||''}${amt}${yld}</div>
+        ${soon?'<div style="font-size:11px;color:#f59e0b;margin-top:4px">⏰ скоро</div>':''}
+      </div>`;
+    }).join('')+'</div>';
+})();
+
 // Drawer
 const drawer=document.getElementById('drawer'), scrim=document.getElementById('scrim');
 function closeD(){drawer.classList.remove('open');scrim.classList.remove('open');}
@@ -449,13 +475,14 @@ function openDrawer(ticker){
   const kv=[];
   const add=(k,v)=>{if(v!==undefined&&v!==null)kv.push(`<div class="kv"><span class="muted">${k}</span><span>${v}</span></div>`);};
   add('Сигнал',`<span class="pill ${x.signal}">${x.signal}</span>`);
-  if(x.rsi!=null)add('RSI',fmt(x.rsi,1));
-  if(x.macd_hist!=null)add('MACD гист.',fmt(x.macd_hist,3));
-  if(x.above_sma200!=null)add('Выше SMA200',x.above_sma200?'да':'нет');
   if(x.pe!=null)add('P/E',fmt(x.pe,1));
   if(x.div_yield!=null)add('Див.доходность',fmt(x.div_yield,1)+'%');
   if(x.roe!=null)add('ROE',fmt(x.roe,1)+'%');
   if(x.sector)add('Сектор',x.sector);
+  if(x.ex_date)add('Дата отсечки',x.ex_date+(x.next_div!=null?' · '+fmt(x.next_div,2)+' ₽':''));
+  if(x.rsi!=null)add('RSI',fmt(x.rsi,1));
+  if(x.macd_hist!=null)add('MACD гист.',fmt(x.macd_hist,3));
+  if(x.above_sma200!=null)add('Выше SMA200',x.above_sma200?'да':'нет');
   document.getElementById('dKv').innerHTML=kv.join('');
   // Сентимент
   const sentSec=document.getElementById('dSentSec'), sent=document.getElementById('dSent');

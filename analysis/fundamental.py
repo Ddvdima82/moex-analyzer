@@ -115,7 +115,11 @@ def get_sector_medians(fundamentals: dict[str, dict[str, Any]]) -> dict[str, dic
 # Скоринг 0–100
 # ──────────────────────────────────────────────────────────────
 
-def score_fundamental(data: dict[str, Any], sector_medians: dict[str, dict[str, float]]) -> float:
+def score_fundamental(
+    data: dict[str, Any],
+    sector_medians: dict[str, dict[str, float]],
+    cbr_rate: float | None = None,
+) -> float:
     """
     Взвешенный фундаментальный скор от 0 до 100.
 
@@ -126,6 +130,9 @@ def score_fundamental(data: dict[str, Any], sector_medians: dict[str, dict[str, 
       ROE           20
       Рост выручки  10
       Маржа         10
+
+    cbr_rate — ключевая ставка ЦБ РФ (%). При ставке > 10% сжимает мультипликаторы
+    и повышает порог "хорошей" дивидендной доходности (конкуренция с ОФЗ).
     """
     score = 0.0
     sector = data.get("sector", "unknown")
@@ -148,13 +155,14 @@ def score_fundamental(data: dict[str, Any], sector_medians: dict[str, dict[str, 
     debt_score = max(0.0, 1.0 - debt / 3.0)
     score += 20 * min(debt_score, 1.0)
 
-    # 3. Дивидендная доходность (вес 20) — данные добавляются снаружи
+    # 3. Дивидендная доходность (вес 20).
+    # При высокой ставке ЦБ порог "хорошей" доходности растёт — конкурируем с ОФЗ.
     div_yield = float(data.get("div_yield_pct") or 0.0)
-    # Идеал: 10–15%. >20% — подозрительно (может быть разовая выплата)
+    div_ideal = max(cbr_rate * 0.8 if cbr_rate else 12.0, 10.0)
     if div_yield > 20:
         div_score = 0.8  # подозрительно высокая
     else:
-        div_score = min(div_yield / 12.0, 1.0)
+        div_score = min(div_yield / div_ideal, 1.0)
     score += 20 * div_score
 
     # 4. ROE (вес 20) — идеал > 20%, < 5% плохо
@@ -172,4 +180,13 @@ def score_fundamental(data: dict[str, Any], sector_medians: dict[str, dict[str, 
     margin_score = min(max(margin, 0.0) / 20.0, 1.0)
     score += 10 * margin_score
 
-    return round(score, 1)
+    # Поправка на ставку ЦБ: при ставке > 10% сжимаем мультипликаторы.
+    # Дивидендная доходность > 65% ставки частично нейтрализует пенальти.
+    if cbr_rate is not None and cbr_rate > 10.0:
+        rate_penalty = min((cbr_rate - 10.0) * 1.2, 12.0)
+        div_shield = 0.0
+        if div_yield > cbr_rate * 0.65:
+            div_shield = min((div_yield - cbr_rate * 0.65) / cbr_rate * 40.0, 6.0)
+        score = max(0.0, score - rate_penalty + div_shield)
+
+    return round(min(score, 100.0), 1)

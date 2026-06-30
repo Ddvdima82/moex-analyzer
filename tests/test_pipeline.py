@@ -1,5 +1,6 @@
 """Тесты оркестрации run_pipeline (параллелизм, сводка, пропуск без цены)."""
 import analysis.fundamental as fundamental_mod
+import analysis.sentiment as sentiment_mod
 import data.moex_api as moex_api
 import main
 
@@ -7,7 +8,6 @@ import main
 def test_process_ticker_sentiment_fallback_flag(monkeypatch):
     """meta.sent_fallback выставляется, когда сентимент вернул error."""
     import analysis.sentiment as sent
-    import analysis.technical as tech
 
     monkeypatch.setattr(moex_api, "get_history", lambda t, days=260: __import__("pandas").DataFrame())
     monkeypatch.setattr(moex_api, "calc_div_yield", lambda t, p: 5.0)
@@ -28,8 +28,10 @@ def test_run_pipeline_orchestration(monkeypatch):
     )
     monkeypatch.setattr(fundamental_mod, "load_fundamentals", lambda: {})
     monkeypatch.setattr(fundamental_mod, "get_sector_medians", lambda f: {})
+    monkeypatch.setattr(moex_api, "get_upcoming_dividends", lambda tickers: {})
+    monkeypatch.setattr(sentiment_mod, "batch_analyze_sentiment", lambda pairs: None)
 
-    def fake_process(ticker, name, price, funds, medians):
+    def fake_process(ticker, name, price, funds, medians, cbr_rate=None, upcoming_div=None):
         result = {
             "ticker": ticker, "company": name, "price": price,
             "final_score": 90.0 if ticker == "SBER" else 40.0,
@@ -54,8 +56,10 @@ def test_run_pipeline_handles_worker_exception(monkeypatch):
     )
     monkeypatch.setattr(fundamental_mod, "load_fundamentals", lambda: {})
     monkeypatch.setattr(fundamental_mod, "get_sector_medians", lambda f: {})
+    monkeypatch.setattr(moex_api, "get_upcoming_dividends", lambda tickers: {})
+    monkeypatch.setattr(sentiment_mod, "batch_analyze_sentiment", lambda pairs: None)
 
-    def fake_process(ticker, name, price, funds, medians):
+    def fake_process(ticker, name, price, funds, medians, cbr_rate=None, upcoming_div=None):
         if ticker == "GAZP":
             raise RuntimeError("сбой потока")
         result = {"ticker": ticker, "company": name, "price": price,

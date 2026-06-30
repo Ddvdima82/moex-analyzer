@@ -130,6 +130,8 @@ def build_stock_result(
             "roe_pct": fundamental_data.get("roe_pct"),
             "div_yield_pct": fundamental_data.get("div_yield_pct"),
             "sector": fundamental_data.get("sector"),
+            "ex_date": fundamental_data.get("ex_date"),
+            "next_div_amount": fundamental_data.get("next_div_amount"),
         },
         "sentiment": {
             "overall": sentiment_data.get("overall_sentiment"),

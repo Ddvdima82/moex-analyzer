@@ -62,6 +62,8 @@ def _process_ticker(
     current_price: float,
     fundamentals: dict,
     sector_medians: dict,
+    cbr_rate: float | None = None,
+    upcoming_div: dict | None = None,
 ) -> tuple[dict, dict]:
     """
     Обрабатывает один тикер (технич. + фундам. + сентимент → итог).
@@ -95,7 +97,10 @@ def _process_ticker(
         fund_data = fundamentals.get(ticker, {}).copy()
         if fund_data:
             fund_data["div_yield_pct"] = calc_div_yield(ticker, current_price)
-            fund_score = score_fundamental(fund_data, sector_medians)
+            if upcoming_div:
+                fund_data["ex_date"] = upcoming_div.get("ex_date")
+                fund_data["next_div_amount"] = upcoming_div.get("amount")
+            fund_score = score_fundamental(fund_data, sector_medians, cbr_rate=cbr_rate)
         else:
             logger.warning("Нет фундаментальных данных для %s — нейтральный скор", ticker)
             fund_data = {}
@@ -175,10 +180,19 @@ def run_pipeline() -> tuple[list[dict], dict]:
             continue
         worklist.append((ticker, COMPANY_NAMES.get(ticker, ticker), price))
 
-    # 4. Батч-сентимент: один вызов Gemini для всех тикеров до параллельной обработки
-    logger.info("=== ШАГ 3: Батч-сентимент ===")
+    # 4. Батч-сентимент и дивидендный календарь — параллельно
+    logger.info("=== ШАГ 3: Батч-сентимент + дивидендный календарь ===")
     from analysis.sentiment import batch_analyze_sentiment
-    batch_analyze_sentiment([(t, name) for t, name, _ in worklist])
+    from data.moex_api import get_upcoming_dividends
+    tickers_list = [t for t, _, _ in worklist]
+    with ThreadPoolExecutor(max_workers=2) as pre:
+        sent_fut = pre.submit(batch_analyze_sentiment, [(t, name) for t, name, _ in worklist])
+        div_fut = pre.submit(get_upcoming_dividends, tickers_list)
+        sent_fut.result()
+        upcoming_divs = div_fut.result()
+    logger.info("Предстоящих дивидендов: %d", len(upcoming_divs))
+
+    cbr_rate = macro.get("cbr_rate")
 
     # 5. Параллельная обработка (сентимент берётся из кэша — API не вызывается)
     logger.info("=== ШАГ 4: Анализ %d тикеров (%d воркеров) ===", len(worklist), TICKER_MAX_WORKERS)
@@ -187,7 +201,10 @@ def run_pipeline() -> tuple[list[dict], dict]:
 
     with ThreadPoolExecutor(max_workers=TICKER_MAX_WORKERS) as ex:
         futures = {
-            ex.submit(_process_ticker, t, name, price, fundamentals, sector_medians): t
+            ex.submit(
+                _process_ticker, t, name, price, fundamentals, sector_medians,
+                cbr_rate, upcoming_divs.get(t),
+            ): t
             for t, name, price in worklist
         }
         for fut in as_completed(futures):

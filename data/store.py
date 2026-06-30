@@ -92,6 +92,20 @@ def save_run(
         return 0
 
 
+def get_last_two_run_dates(db_path: Path | None = None) -> list[str]:
+    """Возвращает последние 2 даты прогонов (новые первыми), [] если нет данных."""
+    try:
+        conn = _connect(db_path)
+        dates = [r[0] for r in conn.execute(
+            "SELECT DISTINCT run_date FROM runs ORDER BY run_date DESC LIMIT 2"
+        ).fetchall()]
+        conn.close()
+        return dates
+    except Exception as exc:
+        logger.error("Ошибка чтения дат прогонов: %s", exc)
+        return []
+
+
 def load_run(run_date: str, db_path: Path | None = None) -> list[dict[str, Any]]:
     """Читает строки прогона за дату (для проверки/бэктеста)."""
     try:
