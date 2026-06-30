@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Any
 
 import pandas as pd
@@ -244,7 +244,7 @@ def get_upcoming_dividends(tickers: list[str]) -> dict[str, dict[str, Any]]:
     """
     from concurrent.futures import ThreadPoolExecutor
 
-    today_str = date.today().strftime("%Y-%m-%d")
+    today_str = today_msk().strftime("%Y-%m-%d")
 
     def _fetch(ticker: str) -> tuple[str, dict | None]:
         for d in get_dividends(ticker):
@@ -275,7 +275,7 @@ def calc_div_yield(ticker: str, current_price: float) -> float:
         return 0.0
 
     # Берём выплаты за последний год
-    one_year_ago = (date.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+    one_year_ago = (today_msk() - timedelta(days=365)).strftime("%Y-%m-%d")
     annual_div = sum(
         float(d.get("value") or 0)
         for d in divs

@@ -74,6 +74,7 @@ def save_run(
         for r in results
     ]
 
+    conn = None
     try:
         conn = _connect(db_path)
         with conn:
@@ -84,12 +85,14 @@ def save_run(
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
-        conn.close()
         logger.info("Сохранено в БД: %d строк за %s", len(rows), run_date)
         return len(rows)
     except Exception as exc:
         logger.error("Ошибка записи в SQLite: %s", exc, exc_info=True)
         return 0
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def get_last_two_run_dates(db_path: Path | None = None) -> list[str]:
