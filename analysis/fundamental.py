@@ -100,12 +100,23 @@ def get_sector_medians(fundamentals: dict[str, dict[str, Any]]) -> dict[str, dic
         if roe is not None:
             sector_roe[sector].append(float(roe))
 
+    # Глобальные медианы по всей вселенной — фолбэк для секторов из 1 бумаги.
+    # Иначе медиана одиночки = она сама → ratio=1.0 → фиксированный скор
+    # независимо от абсолютной оценки (вырождение относительного скоринга).
+    all_pe = [v for lst in sector_pe.values() for v in lst]
+    all_roe = [v for lst in sector_roe.values() for v in lst]
+    global_pe = statistics.median(all_pe) if all_pe else 8.0
+    global_roe = statistics.median(all_roe) if all_roe else 15.0
+
     medians: dict[str, dict[str, float]] = {}
     all_sectors = set(list(sector_pe.keys()) + list(sector_roe.keys()))
     for sector in all_sectors:
+        # < 2 бумаг в секторе → берём глобальную медиану (нет смысла в «относительно себя»)
+        pe_vals = sector_pe[sector]
+        roe_vals = sector_roe[sector]
         medians[sector] = {
-            "pe": statistics.median(sector_pe[sector]) if sector_pe[sector] else 8.0,
-            "roe": statistics.median(sector_roe[sector]) if sector_roe[sector] else 15.0,
+            "pe": statistics.median(pe_vals) if len(pe_vals) >= 2 else global_pe,
+            "roe": statistics.median(roe_vals) if len(roe_vals) >= 2 else global_roe,
         }
 
     return medians
@@ -137,6 +148,13 @@ def score_fundamental(
     score = 0.0
     sector = data.get("sector", "unknown")
 
+    # Множитель сжатия мультипликаторов при высокой ставке ЦБ (один канал).
+    # Высокая ставка = высокая ставка дисконтирования = более низкий справедливый
+    # P/E. При ставке > 10% ужимаем P/E-скор до пола 0.6 (−3% за п.п. сверх 10%).
+    rate_squeeze = 1.0
+    if cbr_rate is not None and cbr_rate > 10.0:
+        rate_squeeze = max(0.6, 1.0 - (cbr_rate - 10.0) * 0.03)
+
     # 1. P/E (вес 20) — чем ниже относительно медианы по сектору, тем лучше.
     # Формула: (3 - ratio) / 2.5, где ratio = pe / медиана.
     # Медиана → 0.8; вдвое ниже медианы → 1.0; втрое выше → 0.0.
@@ -148,27 +166,31 @@ def score_fundamental(
     else:
         ratio = float(pe_raw) / sector_pe
         pe_score = max(0.0, min(1.0, (3.0 - ratio) / 2.5))
-    score += 20 * pe_score
+    score += 20 * pe_score * rate_squeeze
 
     # 2. Долг/EBITDA (вес 20) — идеал < 1x, красный флаг > 3x
     debt = float(data.get("debt_ebitda") or 0.0)
     debt_score = max(0.0, 1.0 - debt / 3.0)
     score += 20 * min(debt_score, 1.0)
 
-    # 3. Дивидендная доходность (вес 20).
-    # При высокой ставке ЦБ порог "хорошей" доходности растёт — конкурируем с ОФЗ.
+    # 3. Дивидендная доходность (вес 20) — единственный канал учёта ставки ЦБ
+    # в этой метрике: порог "хорошей" доходности растёт со ставкой (конкуренция
+    # с ОФЗ). При ставке 15% планка ~12%, без ставки — 12% по умолчанию.
     div_yield = float(data.get("div_yield_pct") or 0.0)
     div_ideal = max(cbr_rate * 0.8 if cbr_rate else 12.0, 10.0)
     if div_yield > 20:
-        div_score = 0.8  # подозрительно высокая
+        div_score = 0.8  # подозрительно высокая — возможна разовая выплата
     else:
         div_score = min(div_yield / div_ideal, 1.0)
     score += 20 * div_score
 
-    # 4. ROE (вес 20) — идеал > 20%, < 5% плохо
+    # 4. ROE (вес 20) — относительно медианы по сектору (1.25× медианы → максимум).
+    # Банки структурно высоко-ROE, капиталоёмкие низко — абсолютная шкала их путала.
     roe = float(data.get("roe_pct") or 0.0)
-    roe_score = min(roe / 25.0, 1.0)
-    score += 20 * max(roe_score, 0.0)
+    sector_roe = sector_medians.get(sector, {}).get("roe", 15.0)
+    roe_benchmark = max(sector_roe * 1.25, 1.0)
+    roe_score = min(max(roe, 0.0) / roe_benchmark, 1.0)
+    score += 20 * roe_score
 
     # 5. Рост выручки (вес 10) — идеал 10–20% в год
     growth = float(data.get("revenue_growth_yoy_pct") or 0.0)
@@ -179,14 +201,5 @@ def score_fundamental(
     margin = float(data.get("net_margin_pct") or 0.0)
     margin_score = min(max(margin, 0.0) / 20.0, 1.0)
     score += 10 * margin_score
-
-    # Поправка на ставку ЦБ: при ставке > 10% сжимаем мультипликаторы.
-    # Дивидендная доходность > 65% ставки частично нейтрализует пенальти.
-    if cbr_rate is not None and cbr_rate > 10.0:
-        rate_penalty = min((cbr_rate - 10.0) * 1.2, 12.0)
-        div_shield = 0.0
-        if div_yield > cbr_rate * 0.65:
-            div_shield = min((div_yield - cbr_rate * 0.65) / cbr_rate * 40.0, 6.0)
-        score = max(0.0, score - rate_penalty + div_shield)
 
     return round(min(score, 100.0), 1)

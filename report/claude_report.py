@@ -67,6 +67,7 @@ def generate_report(scored_stocks: list[dict[str, Any]], macro: dict | None = No
                 "company": s["company"],
                 "price": s["price"],
                 "signal": s["signal"],
+                "confidence": s.get("confidence"),
                 "final_score": s["final_score"],
                 "target_price": s["target_price"],
                 "upside_pct": s["upside_pct"],
@@ -163,8 +164,9 @@ def _fallback_report(scored_stocks: list[dict[str, Any]], macro: dict | None = N
         lines.append("\n🟢 <b>ТОП ПОКУПОК</b>")
         for s in sorted(buy_stocks, key=lambda x: -x["final_score"])[:3]:
             upside = f"+{s['upside_pct']}%" if s["upside_pct"] >= 0 else f"{s['upside_pct']}%"
+            conf = {"low": " ⚠️", "medium": " ◐"}.get(s.get("confidence"), "")
             lines.append(
-                f"\n<b>{escape(str(s['ticker']))} ({escape(str(s['company']))})</b> — {s['price']:,.0f} ₽\n"
+                f"\n<b>{escape(str(s['ticker']))} ({escape(str(s['company']))})</b> — {s['price']:,.0f} ₽{conf}\n"
                 f"Score: {s['final_score']}/100 | Цель: {s['target_price']:,.0f} ₽ ({upside})"
             )
 
@@ -172,8 +174,9 @@ def _fallback_report(scored_stocks: list[dict[str, Any]], macro: dict | None = N
         lines.append("\n\n🔴 <b>ИЗБЕГАТЬ</b>")
         for s in sorted(sell_stocks, key=lambda x: x["final_score"])[:3]:
             upside = f"+{s['upside_pct']}%" if s["upside_pct"] >= 0 else f"{s['upside_pct']}%"
+            conf = {"low": " ⚠️", "medium": " ◐"}.get(s.get("confidence"), "")
             lines.append(
-                f"\n<b>{escape(str(s['ticker']))} ({escape(str(s['company']))})</b> — {s['price']:,.0f} ₽\n"
+                f"\n<b>{escape(str(s['ticker']))} ({escape(str(s['company']))})</b> — {s['price']:,.0f} ₽{conf}\n"
                 f"Score: {s['final_score']}/100 | Риск: {s['target_price']:,.0f} ₽ ({upside})"
             )
 

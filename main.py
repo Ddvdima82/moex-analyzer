@@ -125,6 +125,11 @@ def _process_ticker(
         sent_score = 50.0
         meta["sent_fallback"] = True
 
+    valid = {
+        "fundamental": not meta["fund_neutral"],
+        "technical": not meta["tech_fallback"],
+        "sentiment": not meta["sent_fallback"],
+    }
     result = build_stock_result(
         ticker=ticker,
         company_name=company_name,
@@ -135,6 +140,7 @@ def _process_ticker(
         indicators=indicators,
         fundamental_data=fund_data,
         sentiment_data=sentiment_data,
+        valid=valid,
     )
     logger.info(
         "%s: ИТОГ score=%.1f → %s | цель=%.2f (%.1f%%)",

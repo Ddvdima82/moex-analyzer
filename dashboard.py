@@ -42,6 +42,7 @@ def _latest_from_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "price": r.get("price"),
             "final_score": r.get("final_score"),
             "signal": r.get("signal"),
+            "confidence": r.get("confidence"),
             "target_price": r.get("target_price"),
             "upside_pct": r.get("upside_pct"),
             "f_score": scores.get("fundamental"),
@@ -351,6 +352,10 @@ const DATA = /*__DATA__*/;
 const SIGCLR = {BUY:'#22c55e',HOLD:'#f59e0b',SELL:'#ef4444'};
 const fmt = (v,d=2)=> v==null||isNaN(v) ? '—' : Number(v).toLocaleString('ru-RU',{maximumFractionDigits:d});
 const pct = v=> v==null ? '—' : (v>=0?'+':'')+fmt(v,1)+'%';
+const CONF = {high:['●','#22c55e','высокая достоверность'],
+              medium:['◐','#f59e0b','средняя достоверность'],
+              low:['○','#ef4444','низкая достоверность — фолбэк или разнобой столпов']};
+const confDot = c => {const m=CONF[c]; return m?`<span title="${m[2]}" style="color:${m[1]};font-size:11px;margin-left:5px">${m[0]}</span>`:'';};
 
 // Карточки сигналов
 (function(){
@@ -396,7 +401,7 @@ function draw(){
     <td><b>${x.ticker}</b> <span class="muted">${x.company||''}</span></td>
     <td>${fmt(x.price)}</td>
     <td><b>${fmt(x.final_score,1)}</b></td>
-    <td><span class="pill ${x.signal}">${x.signal}</span></td>
+    <td><span class="pill ${x.signal}">${x.signal}</span>${confDot(x.confidence)}</td>
     <td class="${x.upside_pct>=0?'buy':'sell'}">${pct(x.upside_pct)}</td>
     <td>${fmt(x.f_score,0)}</td><td>${fmt(x.t_score,0)}</td><td>${fmt(x.s_score,0)}</td>
   </tr>`).join('');
@@ -474,7 +479,8 @@ function openDrawer(ticker){
       `<div class="row"><div class="lbl">${l}</div>${bar(v)}<div class="num">${fmt(v,0)}</div></div>`).join('');
   const kv=[];
   const add=(k,v)=>{if(v!==undefined&&v!==null)kv.push(`<div class="kv"><span class="muted">${k}</span><span>${v}</span></div>`);};
-  add('Сигнал',`<span class="pill ${x.signal}">${x.signal}</span>`);
+  add('Сигнал',`<span class="pill ${x.signal}">${x.signal}</span>${confDot(x.confidence)}`);
+  if(x.confidence)add('Достоверность',(CONF[x.confidence]||['','',x.confidence])[2]||x.confidence);
   if(x.pe!=null)add('P/E',fmt(x.pe,1));
   if(x.div_yield!=null)add('Див.доходность',fmt(x.div_yield,1)+'%');
   if(x.roe!=null)add('ROE',fmt(x.roe,1)+'%');
