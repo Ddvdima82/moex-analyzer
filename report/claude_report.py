@@ -45,14 +45,14 @@ REPORT_PROMPT = """Ты опытный аналитик инвестиционн
 Максимум 2500 символов."""
 
 
-def generate_report(scored_stocks: list[dict[str, Any]]) -> str:
+def generate_report(scored_stocks: list[dict[str, Any]], macro: dict | None = None) -> str:
     """
     Генерирует текстовую часть отчёта через Claude.
     При ошибке — возвращает программно сформированный fallback.
     """
     if not USE_CLAUDE_REPORT or not ANTHROPIC_API_KEY:
         logger.info("Claude-отчёт отключён (USE_CLAUDE_REPORT=false или нет ключа) — программный отчёт")
-        return _fallback_report(scored_stocks)
+        return _fallback_report(scored_stocks, macro)
 
     try:
         import anthropic
@@ -105,18 +105,18 @@ def generate_report(scored_stocks: list[dict[str, Any]]) -> str:
             return text
         else:
             logger.warning("Claude вернул пустой ответ для отчёта")
-            return _fallback_report(scored_stocks)
+            return _fallback_report(scored_stocks, macro)
 
     except Exception as exc:
         logger.error("Ошибка генерации отчёта через Claude: %s", exc, exc_info=True)
-        return _fallback_report(scored_stocks)
+        return _fallback_report(scored_stocks, macro)
 
 
 # ──────────────────────────────────────────────────────────────
 # Программный fallback
 # ──────────────────────────────────────────────────────────────
 
-def _fallback_report(scored_stocks: list[dict[str, Any]]) -> str:
+def _fallback_report(scored_stocks: list[dict[str, Any]], macro: dict | None = None) -> str:
     """Формирует базовый отчёт без Claude."""
     today = today_msk().strftime("%d.%m.%Y")
 
@@ -125,6 +125,19 @@ def _fallback_report(scored_stocks: list[dict[str, Any]]) -> str:
 
     lines = [f"📊 <b>Анализ Мосбиржи — {today}</b>\n"]
     lines.append("📈 <i>Автоматический отчёт (режим без AI-комментария)</i>\n")
+
+    if macro:
+        parts = []
+        if macro.get("imoex") is not None:
+            parts.append(f"IMOEX <b>{macro['imoex']:,.0f}</b>")
+        if macro.get("usd_rub") is not None:
+            parts.append(f"USD/RUB <b>{macro['usd_rub']:.2f}</b>")
+        if macro.get("cbr_rate") is not None:
+            parts.append(f"Ставка ЦБ <b>{macro['cbr_rate']:.1f}%</b>")
+        if macro.get("brent") is not None:
+            parts.append(f"Brent <b>${macro['brent']:.1f}</b>")
+        if parts:
+            lines.append("\n💹 " + " · ".join(parts) + "\n")
 
     if buy_stocks:
         lines.append("\n🟢 <b>ТОП ПОКУПОК</b>")

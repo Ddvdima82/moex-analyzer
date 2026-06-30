@@ -176,11 +176,13 @@ def build_dashboard(
     results: list[dict[str, Any]] | None = None,
     db_path: Path | None = None,
     out_path: Path | None = None,
+    macro: dict | None = None,
 ) -> Path | None:
     """Собирает данные, рендерит HTML и пишет в out_path (по умолчанию docs/index.html)."""
     out = out_path or DASHBOARD_FILE
     try:
         data = gather_dashboard_data(results, db_path)
+        data["macro"] = macro or {}
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(render_html(data), encoding="utf-8")
         logger.info("Дашборд собран: %s (%d акций, %d прогонов)",
@@ -287,6 +289,10 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <div class="sub">Сгенерировано <span id="gen"></span></div>
   </header>
 
+  <div class="sec" id="macroSec" style="display:none">Макроконтекст</div>
+  <div class="cards" id="macroCards" style="display:none"></div>
+
+  <div class="sec">Сигналы</div>
   <div class="cards" id="cards"></div>
 
   <div class="sec">Сигналы по неделям</div>
@@ -341,7 +347,7 @@ const SIGCLR = {BUY:'#22c55e',HOLD:'#f59e0b',SELL:'#ef4444'};
 const fmt = (v,d=2)=> v==null||isNaN(v) ? '—' : Number(v).toLocaleString('ru-RU',{maximumFractionDigits:d});
 const pct = v=> v==null ? '—' : (v>=0?'+':'')+fmt(v,1)+'%';
 
-// Карточки
+// Карточки сигналов
 (function(){
   const s=DATA.stats;
   const c=[['Всего',s.total,''],['BUY',s.BUY,'buy'],['HOLD',s.HOLD,'hold'],
@@ -350,6 +356,23 @@ const pct = v=> v==null ? '—' : (v>=0?'+':'')+fmt(v,1)+'%';
     `<div class="card"><div class="v ${cl}">${v}</div><div class="l">${l}</div></div>`).join('');
   document.getElementById('runDate').textContent = DATA.run_date;
   document.getElementById('gen').textContent = DATA.generated;
+})();
+
+// Макроконтекст
+(function(){
+  const m=DATA.macro||{};
+  const items=[];
+  if(m.imoex!=null) items.push(['IMOEX',fmt(m.imoex,0),'пунктов','']);
+  if(m.usd_rub!=null) items.push(['USD/RUB',fmt(m.usd_rub,2),'₽','']);
+  if(m.cny_rub!=null) items.push(['CNY/RUB',fmt(m.cny_rub,2),'₽','']);
+  if(m.cbr_rate!=null) items.push(['Ставка ЦБ',fmt(m.cbr_rate,1)+'%','','']);
+  if(m.rgbi!=null) items.push(['RGBI',fmt(m.rgbi,2),'пунктов','']);
+  if(m.brent!=null) items.push(['Brent','$'+fmt(m.brent,1),'за барр.','']);
+  if(!items.length) return;
+  document.getElementById('macroSec').style.display='';
+  const mc=document.getElementById('macroCards'); mc.style.display='';
+  mc.innerHTML=items.map(([l,v,u,cl])=>
+    `<div class="card"><div class="v ${cl}">${v}</div><div class="l">${l}${u?' · '+u:''}</div></div>`).join('');
 })();
 
 // Таблица

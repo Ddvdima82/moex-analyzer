@@ -160,6 +160,10 @@ def run_pipeline() -> list[dict]:
     quotes = get_current_quotes(TOP20_TICKERS)
     logger.info("Котировки получены для %d из %d тикеров", len(quotes), len(TOP20_TICKERS))
 
+    # 2.5. Макроданные (параллельно, не блокирует pipeline при ошибке)
+    from data.macro import fetch_macro
+    macro = fetch_macro()
+
     # 3. Список к обработке (только с валидной ценой)
     worklist = []
     skipped_no_price = 0
@@ -208,14 +212,14 @@ def run_pipeline() -> list[dict]:
         len(results), skipped_no_price, summary["errors"],
         summary["tech_fallback"], summary["fund_neutral"], summary["sent_fallback"],
     )
-    return results
+    return results, macro
 
 
 # ──────────────────────────────────────────────────────────────
 # Сохранение результатов
 # ──────────────────────────────────────────────────────────────
 
-def save_results(results: list[dict]) -> None:
+def save_results(results: list[dict], macro: dict | None = None) -> None:
     """Сохраняет JSON и MD-отчёт в reports/ и строки прогона в SQLite."""
     from config import REPORTS_DIR, today_msk
     from report.claude_report import format_full_table
@@ -230,7 +234,7 @@ def save_results(results: list[dict]) -> None:
         logger.error("Ошибка сохранения в SQLite: %s", exc)
 
     try:
-        build_dashboard(results)
+        build_dashboard(results, macro=macro)
     except Exception as exc:
         logger.error("Ошибка построения дашборда: %s", exc)
 
@@ -276,7 +280,7 @@ def main() -> None:
 
     try:
         # Запускаем pipeline
-        results = run_pipeline()
+        results, macro = run_pipeline()
 
         if not results:
             msg = "Pipeline завершён, но нет данных ни по одной акции!"
@@ -286,11 +290,11 @@ def main() -> None:
             sys.exit(1)
 
         # Сохраняем файлы
-        save_results(results)
+        save_results(results, macro=macro)
 
         # Генерируем текстовый отчёт через Claude
         logger.info("=== ШАГ 7: Генерация отчёта через Claude ===")
-        report_text = generate_report(results)
+        report_text = generate_report(results, macro=macro)
 
         # Таблица всех акций (добавляется отдельно)
         table_text = format_full_table(results)
