@@ -315,22 +315,21 @@ def main() -> None:
         # Сохраняем файлы
         save_results(results, macro=macro)
 
-        # Генерируем текстовый отчёт через Claude
-        logger.info("=== ШАГ 7: Генерация отчёта через Claude ===")
-        report_text = generate_report(results, macro=macro)
-
-        # Таблица всех акций (добавляется отдельно)
-        table_text = format_full_table(results)
-
-        # Отправляем в Telegram
-        if tg_ok:
-            logger.info("=== ШАГ 8: Отправка в Telegram ===")
-            send_report(report_text)
-            send_report(table_text)
-            logger.info("Отчёт успешно отправлен в Telegram")
+        # Полный отчёт через Claude — только по понедельникам (ежедневный запуск)
+        is_monday = today_msk().weekday() == 0
+        if is_monday:
+            logger.info("=== ШАГ 7: Генерация отчёта через Claude ===")
+            report_text = generate_report(results, macro=macro)
+            table_text = format_full_table(results)
+            if tg_ok:
+                logger.info("=== ШАГ 8: Отправка в Telegram ===")
+                send_report(report_text)
+                send_report(table_text)
+                logger.info("Отчёт успешно отправлен в Telegram")
+            else:
+                logger.info("=== ОТЧЁТ (консоль) ===\n%s\n%s", report_text, table_text)
         else:
-            # Выводим в консоль если Telegram не настроен
-            logger.info("=== ОТЧЁТ (консоль) ===\n%s\n%s", report_text, table_text)
+            logger.info("=== ШАГ 7: Не понедельник — полный отчёт пропущен, дашборд обновлён ===")
 
         logger.info("========== АНАЛИЗ ЗАВЕРШЁН УСПЕШНО ==========")
 

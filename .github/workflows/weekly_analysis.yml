@@ -1,9 +1,9 @@
-name: Weekly MOEX Stock Analysis
+name: Daily MOEX Stock Analysis
 
 on:
   schedule:
-    # Каждый понедельник в 06:00 UTC = 09:00 МСК
-    - cron: '0 6 * * 1'
+    # Пн–Пт в 07:00 UTC = 10:00 МСК (открытие торгов)
+    - cron: '0 7 * * 1-5'
   workflow_dispatch:   # Ручной запуск для тестирования
 
 # Нужно для публикации дашборда на GitHub Pages
