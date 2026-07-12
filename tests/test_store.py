@@ -72,3 +72,18 @@ def test_separate_dates_kept(tmp_path):
 def test_load_missing_date_empty(tmp_path):
     db = tmp_path / "h.db"
     assert store.load_run("1999-01-01", db_path=db) == []
+
+
+def test_get_prev_signals(tmp_path):
+    db = tmp_path / "h.db"
+    store.save_run([_stock("SBER", 80.0, "BUY")], run_date="2026-07-10", db_path=db)
+    store.save_run([_stock("SBER", 59.0, "BUY"), _stock("GAZP", 30.0, "SELL")],
+                   run_date="2026-07-11", db_path=db)
+    # Берётся последний прогон СТРОГО раньше before_date
+    sig = store.get_prev_signals(before_date="2026-07-12", db_path=db)
+    assert sig == {"SBER": "BUY", "GAZP": "SELL"}
+    # Повторный прогон за тот же день не опирается сам на себя
+    sig2 = store.get_prev_signals(before_date="2026-07-11", db_path=db)
+    assert sig2 == {"SBER": "BUY"}
+    # Нет истории → пустой словарь
+    assert store.get_prev_signals(before_date="2026-07-01", db_path=db) == {}

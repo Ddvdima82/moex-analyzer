@@ -71,10 +71,17 @@ def test_old_rows_without_indicators_are_silent():
     assert build_delta_message(prev, curr, "2026-07-01", "2026-07-02") is None
 
 
+def test_signal_change_with_tiny_score_delta_suppressed():
+    """Смена сигнала при |Δскор| < 3 — дрожание у порога, не уведомляем."""
+    prev = [_row(signal="BUY", score=60.0)]
+    curr = [_row(signal="HOLD", score=59.0)]
+    assert build_delta_message(prev, curr, "2026-07-01", "2026-07-02") is None
+
+
 def test_alerts_appended_to_signal_changes():
-    prev = [_row(signal="HOLD", indicators={"rsi": 40.0}),
+    prev = [_row(signal="HOLD", score=55.0, indicators={"rsi": 40.0}),
             _row(ticker="GAZP", signal="HOLD", indicators={"above_sma200": False})]
-    curr = [_row(signal="BUY", indicators={"rsi": 38.0}),
+    curr = [_row(signal="BUY", score=65.0, indicators={"rsi": 38.0}),
             _row(ticker="GAZP", signal="HOLD", indicators={"above_sma200": True})]
     msg = build_delta_message(prev, curr, "2026-07-01", "2026-07-02")
     assert msg and "Изменения сигналов" in msg

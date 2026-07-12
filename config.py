@@ -46,6 +46,9 @@ def today_msk() -> date:
 ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
 TELEGRAM_BOT_TOKEN: str = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID: str = os.environ.get("TELEGRAM_CHAT_ID", "")
+# Боевая отправка в Telegram — только при явном разрешении (ставится в CI).
+# Локальный прогон без флага печатает отчёт в консоль и не дублирует канал.
+TELEGRAM_ENABLED: bool = os.environ.get("TELEGRAM_ENABLED", "").lower() in ("1", "true", "yes")
 # Gemini (Google) — дешёвый сентимент со встроенным поиском. SDK читает GEMINI_API_KEY.
 GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
 GEMINI_PROXY: str = os.environ.get("GEMINI_PROXY", "")
@@ -100,6 +103,10 @@ SIGNAL_THRESHOLDS: dict[str, int] = {
     "BUY":  60,   # score >= 60 → BUY
     "SELL": 35,   # score <= 35 → SELL, иначе HOLD
 }
+# Гистерезис сигналов: вход в BUY/SELL по основному порогу, выход — только
+# когда скор отходит от порога дальше этой величины (BUY держится до <56).
+# Убирает хлопанье BUY↔HOLD при дрожании скора на 1–2 пункта (шум сентимента).
+SIGNAL_HYSTERESIS: float = 4.0
 
 # ──────────────────────────────────────────────────────────────
 # MOEX ISS API
@@ -180,6 +187,11 @@ def validate_config() -> list[str]:
     buy, sell = SIGNAL_THRESHOLDS["BUY"], SIGNAL_THRESHOLDS["SELL"]
     if not (0 <= sell < buy <= 100):
         raise ValueError(f"Некорректные SIGNAL_THRESHOLDS: BUY={buy}, SELL={sell}")
+    # Полосы гистерезиса не должны перекрываться, иначе BUY и SELL спорят за скор
+    if SIGNAL_HYSTERESIS < 0 or buy - SIGNAL_HYSTERESIS <= sell + SIGNAL_HYSTERESIS:
+        raise ValueError(
+            f"Некорректный SIGNAL_HYSTERESIS={SIGNAL_HYSTERESIS} для порогов BUY={buy}/SELL={sell}"
+        )
 
     if TICKER_MAX_WORKERS < 1:
         raise ValueError(f"TICKER_MAX_WORKERS должен быть >= 1, получено {TICKER_MAX_WORKERS}")
@@ -193,7 +205,9 @@ def validate_config() -> list[str]:
         warnings.append("ANTHROPIC_API_KEY не задан — сентимент уйдёт в нейтральный фолбэк")
     if USE_CLAUDE_REPORT and not ANTHROPIC_API_KEY:
         warnings.append("USE_CLAUDE_REPORT=true, но ANTHROPIC_API_KEY не задан — отчёт будет программным")
-    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
+    if not TELEGRAM_ENABLED:
+        warnings.append("TELEGRAM_ENABLED не задан — отчёты только в консоль/лог (боевая отправка из CI)")
+    elif not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
         warnings.append("Telegram не настроен — отчёт не будет отправлен")
 
     return warnings

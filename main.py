@@ -64,6 +64,7 @@ def _process_ticker(
     sector_medians: dict,
     cbr_rate: float | None = None,
     upcoming_div: dict | None = None,
+    prev_signal: str | None = None,
 ) -> tuple[dict, dict]:
     """
     Обрабатывает один тикер (технич. + фундам. + сентимент → итог).
@@ -145,6 +146,7 @@ def _process_ticker(
         fundamental_data=fund_data,
         sentiment_data=sentiment_data,
         valid=valid,
+        prev_signal=prev_signal,
     )
     logger.info(
         "%s: ИТОГ score=%.1f → %s | цель=%.2f (%.1f%%)",
@@ -204,6 +206,12 @@ def run_pipeline() -> tuple[list[dict], dict]:
 
     cbr_rate = macro.get("cbr_rate")
 
+    # Сигналы прошлого прогона — для гистерезиса (вчерашний BUY при скоре 59
+    # остаётся BUY). Пустой словарь (нет истории) → чистые пороги.
+    from data.store import get_prev_signals
+    prev_signals = get_prev_signals()
+    logger.info("Гистерезис: прошлые сигналы для %d тикеров", len(prev_signals))
+
     # 5. Параллельная обработка (сентимент берётся из кэша — API не вызывается)
     logger.info("=== ШАГ 4: Анализ %d тикеров (%d воркеров) ===", len(worklist), TICKER_MAX_WORKERS)
     results: list[dict] = []
@@ -213,7 +221,7 @@ def run_pipeline() -> tuple[list[dict], dict]:
         futures = {
             ex.submit(
                 _process_ticker, t, name, price, fundamentals, sector_medians,
-                cbr_rate, upcoming_divs.get(t),
+                cbr_rate, upcoming_divs.get(t), prev_signals.get(t),
             ): t
             for t, name, price in worklist
         }

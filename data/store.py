@@ -103,6 +103,39 @@ def save_run(
             conn.close()
 
 
+def get_prev_signals(
+    before_date: str | None = None,
+    db_path: Path | None = None,
+) -> dict[str, str]:
+    """
+    Сигналы последнего прогона СТРОГО раньше before_date (по умолчанию — сегодня,
+    МСК). Для гистерезиса сигналов: повторный прогон за тот же день не должен
+    опираться сам на себя. {} если истории нет — get_signal перейдёт на чистые пороги.
+    """
+    before_date = before_date or today_msk().strftime("%Y-%m-%d")
+    try:
+        conn = _connect(db_path)
+        row = conn.execute(
+            "SELECT MAX(run_date) FROM runs WHERE run_date < ?", (before_date,)
+        ).fetchone()
+        prev_date = row[0] if row else None
+        if not prev_date:
+            conn.close()
+            return {}
+        out = {
+            r[0]: r[1]
+            for r in conn.execute(
+                "SELECT ticker, signal FROM runs WHERE run_date = ?", (prev_date,)
+            )
+            if r[1]
+        }
+        conn.close()
+        return out
+    except Exception as exc:
+        logger.error("Ошибка чтения прошлых сигналов: %s", exc)
+        return {}
+
+
 def get_last_two_run_dates(db_path: Path | None = None) -> list[str]:
     """Возвращает последние 2 даты прогонов (новые первыми), [] если нет данных."""
     try:

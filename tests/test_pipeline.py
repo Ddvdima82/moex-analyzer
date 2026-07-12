@@ -2,6 +2,7 @@
 import analysis.fundamental as fundamental_mod
 import analysis.sentiment as sentiment_mod
 import data.moex_api as moex_api
+import data.store as store_mod
 import main
 
 
@@ -30,8 +31,10 @@ def test_run_pipeline_orchestration(monkeypatch):
     monkeypatch.setattr(fundamental_mod, "get_sector_medians", lambda f: {})
     monkeypatch.setattr(moex_api, "get_upcoming_dividends", lambda tickers: {})
     monkeypatch.setattr(sentiment_mod, "batch_analyze_sentiment", lambda pairs: None)
+    monkeypatch.setattr(store_mod, "get_prev_signals", lambda **kw: {})
 
-    def fake_process(ticker, name, price, funds, medians, cbr_rate=None, upcoming_div=None):
+    def fake_process(ticker, name, price, funds, medians,
+                     cbr_rate=None, upcoming_div=None, prev_signal=None):
         result = {
             "ticker": ticker, "company": name, "price": price,
             "final_score": 90.0 if ticker == "SBER" else 40.0,
@@ -58,8 +61,10 @@ def test_run_pipeline_handles_worker_exception(monkeypatch):
     monkeypatch.setattr(fundamental_mod, "get_sector_medians", lambda f: {})
     monkeypatch.setattr(moex_api, "get_upcoming_dividends", lambda tickers: {})
     monkeypatch.setattr(sentiment_mod, "batch_analyze_sentiment", lambda pairs: None)
+    monkeypatch.setattr(store_mod, "get_prev_signals", lambda **kw: {})
 
-    def fake_process(ticker, name, price, funds, medians, cbr_rate=None, upcoming_div=None):
+    def fake_process(ticker, name, price, funds, medians,
+                     cbr_rate=None, upcoming_div=None, prev_signal=None):
         if ticker == "GAZP":
             raise RuntimeError("сбой потока")
         result = {"ticker": ticker, "company": name, "price": price,

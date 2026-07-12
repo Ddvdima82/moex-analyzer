@@ -11,7 +11,7 @@ from typing import Any
 
 import requests
 
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +95,9 @@ def send_report(text: str) -> bool:
     Длинные сообщения разбиваются на части.
     Возвращает True если все части отправлены.
     """
+    if not TELEGRAM_ENABLED:
+        logger.info("TELEGRAM_ENABLED не задан — отправка пропущена (боевой канал шлёт только CI)")
+        return False
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.error(
             "Telegram не настроен: TELEGRAM_BOT_TOKEN=%s, TELEGRAM_CHAT_ID=%s",
@@ -145,8 +148,8 @@ def send_error(message: str) -> bool:
 
 
 def check_connection() -> bool:
-    """Проверяет доступность Telegram Bot API (getMe)."""
-    if not TELEGRAM_BOT_TOKEN:
+    """Проверяет доступность Telegram Bot API (getMe). False при выключенной отправке."""
+    if not TELEGRAM_ENABLED or not TELEGRAM_BOT_TOKEN:
         return False
 
     url = TELEGRAM_API.format(token=TELEGRAM_BOT_TOKEN, method="getMe")

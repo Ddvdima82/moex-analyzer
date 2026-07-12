@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 import statistics
 
-from config import SIGNAL_THRESHOLDS, WEIGHTS
+from config import SIGNAL_HYSTERESIS, SIGNAL_THRESHOLDS, WEIGHTS
 
 
 # ──────────────────────────────────────────────────────────────
@@ -85,14 +85,26 @@ def assess_confidence(
 # Торговые сигналы
 # ──────────────────────────────────────────────────────────────
 
-def get_signal(score: float) -> str:
-    """BUY (≥70) / SELL (≤30) / HOLD (всё остальное)."""
-    if score >= SIGNAL_THRESHOLDS["BUY"]:
+def get_signal(score: float, prev_signal: str | None = None) -> str:
+    """
+    BUY / SELL / HOLD по порогам из config.SIGNAL_THRESHOLDS, с гистерезисом.
+
+    Вход в BUY/SELL — по основному порогу. Выход — только когда скор отходит
+    от порога дальше чем на SIGNAL_HYSTERESIS: вчерашний BUY при скоре 59
+    остаётся BUY (порог 60, полоса до 56). Без prev_signal (первый прогон,
+    нет истории) — чистые пороги. Убирает хлопанье сигнала при дрожании
+    скора на 1–2 пункта у порога (недетерминизм сентимента).
+    """
+    buy, sell = SIGNAL_THRESHOLDS["BUY"], SIGNAL_THRESHOLDS["SELL"]
+    if score >= buy:
         return "BUY"
-    elif score <= SIGNAL_THRESHOLDS["SELL"]:
+    if score <= sell:
         return "SELL"
-    else:
-        return "HOLD"
+    if prev_signal == "BUY" and score >= buy - SIGNAL_HYSTERESIS:
+        return "BUY"
+    if prev_signal == "SELL" and score <= sell + SIGNAL_HYSTERESIS:
+        return "SELL"
+    return "HOLD"
 
 
 def get_signal_emoji(signal: str) -> str:
@@ -152,6 +164,7 @@ def build_stock_result(
     fundamental_data: dict,
     sentiment_data: dict,
     valid: dict[str, bool] | None = None,
+    prev_signal: str | None = None,
 ) -> dict:
     """
     Собирает полный результат по одной акции в единый словарь.
@@ -159,11 +172,12 @@ def build_stock_result(
 
     valid — флаги «столп на реальных данных» (для перенормировки весов и
     оценки достоверности). None → все три считаются валидными.
+    prev_signal — сигнал прошлого прогона (для гистерезиса, см. get_signal).
     """
     final = compute_final_score(
         fundamental_score, technical_score, sentiment_score, valid=valid
     )
-    signal = get_signal(final)
+    signal = get_signal(final, prev_signal=prev_signal)
     target = get_target_price(current_price, final, indicators.get("volatility_pct"))
     upside = get_upside_pct(current_price, target)
     confidence = assess_confidence(

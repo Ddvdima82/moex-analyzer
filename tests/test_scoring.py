@@ -45,6 +45,23 @@ def test_get_signal_thresholds():
     assert get_signal(10) == "SELL"
 
 
+def test_get_signal_hysteresis():
+    # Вчерашний BUY при скоре в полосе [56, 60) удерживается
+    assert get_signal(59, prev_signal="BUY") == "BUY"
+    assert get_signal(56, prev_signal="BUY") == "BUY"
+    # Вышел из полосы → HOLD
+    assert get_signal(55.9, prev_signal="BUY") == "HOLD"
+    # Без прошлого BUY полоса не работает — вход только по основному порогу
+    assert get_signal(59, prev_signal="HOLD") == "HOLD"
+    assert get_signal(59) == "HOLD"
+    # Симметрично для SELL (порог 35, полоса до 39)
+    assert get_signal(38, prev_signal="SELL") == "SELL"
+    assert get_signal(39.1, prev_signal="SELL") == "HOLD"
+    # Основные пороги всегда главнее прошлого сигнала
+    assert get_signal(60, prev_signal="SELL") == "BUY"
+    assert get_signal(35, prev_signal="BUY") == "SELL"
+
+
 def test_signal_emoji():
     assert get_signal_emoji("BUY") == "🟢"
     assert get_signal_emoji("SELL") == "🔴"

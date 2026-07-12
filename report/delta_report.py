@@ -21,6 +21,10 @@ _RSI_OVERSOLD = 25.0
 _RSI_OVERBOUGHT = 75.0
 _VOLUME_SPIKE_PCT = 100.0
 
+# Смена сигнала при |Δскор| меньше этого — дрожание у порога, не событие.
+# Второй рубеж после гистерезиса в get_signal (тот не покрывает вход 58→60).
+_MIN_SCORE_DELTA = 3.0
+
 
 def _indicators(row: dict[str, Any]) -> dict[str, Any]:
     """Индикаторы строки прогона: dict как есть или разбор indicators_json из SQLite."""
@@ -100,6 +104,9 @@ def build_delta_message(
         p = prev.get(ticker)
         if not p or p["signal"] == c["signal"]:
             continue
+        sp, sc = p.get("final_score"), c.get("final_score")
+        if sp is not None and sc is not None and abs(sc - sp) < _MIN_SCORE_DELTA:
+            continue  # шумовая смена сигнала — не уведомляем
         changes.append({
             "ticker": ticker,
             "company": c.get("company", ticker),

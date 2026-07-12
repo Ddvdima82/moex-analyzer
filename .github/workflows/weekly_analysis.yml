@@ -52,6 +52,8 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Боевой канал шлёт только CI — локальные прогоны без флага молчат
+          TELEGRAM_ENABLED: "1"
         run: python main.py
 
       # Страховка кэша: Actions Cache вытесняется (лимит 10GB, TTL 7 дней) —
@@ -70,6 +72,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_ENABLED: "1"
         run: python delta_check.py
 
       - name: Upload logs on failure
