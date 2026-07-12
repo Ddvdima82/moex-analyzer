@@ -1,15 +1,21 @@
 """
 Сборщик заголовков новостей из публичных RSS-лент российских СМИ.
 Без внешних зависимостей: urllib + xml.etree.ElementTree.
+
+Ленты скачиваются ОДИН раз за процесс (параллельно) и кэшируются —
+fetch_headlines() для каждого тикера фильтрует уже загруженные заголовки,
+а не ходит в сеть повторно (раньше: 20 тикеров × 8 лент = 160 запросов).
 """
 from __future__ import annotations
 
 import email.utils
 import logging
 import re
+import threading
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import NamedTuple
 
@@ -30,6 +36,14 @@ _RSS_FEEDS = [
 _REQUEST_TIMEOUT = 10  # сек
 _MAX_AGE_DAYS = 7      # смотрим новости за неделю
 _MAX_HEADLINES = 10    # возвращаем не более N заголовков
+
+# Кэш скачанных лент на процесс: список (title, description, pub_date)
+_FEEDS_LOCK = threading.Lock()
+_FEEDS_CACHE: list[tuple[str, str, str]] | None = None
+
+# Служебные слова, бесполезные как ключи поиска: «ГК Самолет» не должен
+# матчить каждый заголовок с «ГК», «Группа Позитив» — каждый с «группа»
+_STOP_WORDS = {"ао", "пао", "оао", "зао", "нк", "гк", "мк", "группа", "компания", "group", "retail"}
 
 
 class Headline(NamedTuple):
@@ -94,9 +108,50 @@ def _is_recent(pub_date_str: str, max_age_days: int) -> bool:
 
 
 def _matches(text: str, keywords: list[str]) -> bool:
-    """True если в тексте есть хотя бы одно ключевое слово (без учёта регистра)."""
+    """
+    True если в тексте есть хотя бы одно ключевое слово (без учёта регистра).
+    Длинные слова (>3) ищутся подстрокой — так ловятся падежи («Сбербанка»).
+    Короткие («МТС», «ВТБ», «ПИК», «X5») — только целым словом, иначе они либо
+    не искались вовсе, либо совпадали внутри случайных слов.
+    """
     text_lower = text.lower()
-    return any(kw.lower() in text_lower for kw in keywords)
+    for kw in keywords:
+        if len(kw) > 3:
+            if kw in text_lower:
+                return True
+        elif re.search(rf"(?<!\w){re.escape(kw)}(?!\w)", text_lower):
+            return True
+    return False
+
+
+def _load_all_items(force: bool = False) -> list[tuple[str, str, str]]:
+    """
+    Скачивает все RSS-ленты параллельно, один раз за процесс.
+    Возвращает список (title, description, pub_date). Потокобезопасно.
+    """
+    global _FEEDS_CACHE
+    with _FEEDS_LOCK:
+        if _FEEDS_CACHE is not None and not force:
+            return _FEEDS_CACHE
+
+        items: list[tuple[str, str, str]] = []
+        with ThreadPoolExecutor(max_workers=len(_RSS_FEEDS)) as ex:
+            for feed_items in ex.map(_fetch_rss, _RSS_FEEDS):
+                for item in feed_items:
+                    title = _item_text(item, "title", "title")
+                    desc = _item_text(item, "description", "summary")
+                    pub = _item_text(item, "pubDate", "updated") or _item_text(item, "published")
+                    if title:
+                        items.append((title, desc, pub))
+
+        # Пустой результат НЕ кэшируем: транзиентный сетевой сбой на старте
+        # иначе оставил бы весь прогон без новостей без единой повторной попытки
+        if items:
+            _FEEDS_CACHE = items
+            logger.info("RSS: загружено %d заголовков из %d лент", len(items), len(_RSS_FEEDS))
+        else:
+            logger.warning("RSS: ни одна из %d лент не вернула данных — повторим при следующем вызове", len(_RSS_FEEDS))
+        return items
 
 
 def fetch_headlines(
@@ -105,35 +160,28 @@ def fetch_headlines(
     max_headlines: int = _MAX_HEADLINES,
 ) -> list[Headline]:
     """
-    Собирает свежие заголовки новостей о компании из RSS-лент.
-    Возвращает список Headline (title, pub_date), не более max_headlines.
+    Возвращает свежие заголовки новостей о компании из кэша RSS-лент
+    (сеть — только при первом вызове за процесс). Не более max_headlines.
     """
-    # Ключевые слова для фильтрации: тикер + основные слова из названия
+    # Ключевые слова для фильтрации: тикер + слова из названия
+    # (кроме односимвольных и служебных вроде «ГК»/«ПАО»)
     words = re.split(r"[\s\-]+", company_name)
-    # Берём слова длиннее 3 букв (отсеиваем «и», «ОАО» и т.п.)
-    keywords = [ticker] + [w for w in words if len(w) > 3]
+    keywords = [ticker] + [w for w in words if len(w) > 1 and w.lower() not in _STOP_WORDS]
     keywords = list(dict.fromkeys(kw.lower() for kw in keywords))  # дедупликация
 
     found: list[Headline] = []
     seen: set[str] = set()
 
-    for url in _RSS_FEEDS:
+    for title, desc, pub in _load_all_items():
         if len(found) >= max_headlines:
             break
-        items = _fetch_rss(url)
-        for item in items:
-            if len(found) >= max_headlines:
-                break
-            title = _item_text(item, "title", "title")
-            desc = _item_text(item, "description", "summary")
-            pub = _item_text(item, "pubDate", "updated") or _item_text(item, "published")
-            if not title or title in seen:
-                continue
-            if not _is_recent(pub, _MAX_AGE_DAYS):
-                continue
-            if _matches(title + " " + desc, keywords):
-                seen.add(title)
-                found.append(Headline(title=title, pub_date=pub[:25] if pub else ""))
+        if title in seen:
+            continue
+        if not _is_recent(pub, _MAX_AGE_DAYS):
+            continue
+        if _matches(title + " " + desc, keywords):
+            seen.add(title)
+            found.append(Headline(title=title, pub_date=pub[:25] if pub else ""))
 
     logger.info("Новости %s (%s): найдено %d заголовков", ticker, company_name, len(found))
     return found

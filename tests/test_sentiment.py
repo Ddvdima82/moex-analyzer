@@ -93,9 +93,15 @@ def test_dispatch_unknown(monkeypatch):
 
 # ── Скоринг ──────────────────────────────────────────────────
 
-def test_score_sentiment_penalty_no_news():
-    # нет новостей → штраф -10
-    assert sent.score_sentiment({"sentiment_score": 60, "positive_count": 0, "negative_count": 0}) == 50.0
+def test_score_sentiment_no_news_no_penalty():
+    # Нет новостей — НЕ негатив: балл модели без штрафа (столп исключается
+    # из финального скора через meta["sent_fallback"], а не через штраф)
+    assert sent.score_sentiment({"sentiment_score": 60, "positive_count": 0, "negative_count": 0}) == 60.0
+
+
+def test_score_sentiment_clamped():
+    assert sent.score_sentiment({"sentiment_score": 130}) == 100.0
+    assert sent.score_sentiment({"sentiment_score": -15}) == 0.0
 
 
 def test_score_sentiment_with_news():

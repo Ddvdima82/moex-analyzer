@@ -184,9 +184,15 @@ def validate_config() -> list[str]:
     if TICKER_MAX_WORKERS < 1:
         raise ValueError(f"TICKER_MAX_WORKERS должен быть >= 1, получено {TICKER_MAX_WORKERS}")
 
-    # Нефатальные предупреждения о настройке окружения
-    if not ANTHROPIC_API_KEY:
-        warnings.append("ANTHROPIC_API_KEY не задан — сентимент и отчёт пойдут в фолбэк")
+    # Нефатальные предупреждения о настройке окружения.
+    # Ключ проверяем у АКТИВНОГО провайдера сентимента — предупреждение про
+    # неиспользуемый ключ только маскирует реальную проблему.
+    if SENTIMENT_PROVIDER == "gemini" and not GEMINI_API_KEY:
+        warnings.append("GEMINI_API_KEY не задан — сентимент уйдёт в нейтральный фолбэк")
+    if SENTIMENT_PROVIDER == "anthropic" and not ANTHROPIC_API_KEY:
+        warnings.append("ANTHROPIC_API_KEY не задан — сентимент уйдёт в нейтральный фолбэк")
+    if USE_CLAUDE_REPORT and not ANTHROPIC_API_KEY:
+        warnings.append("USE_CLAUDE_REPORT=true, но ANTHROPIC_API_KEY не задан — отчёт будет программным")
     if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
         warnings.append("Telegram не настроен — отчёт не будет отправлен")
 

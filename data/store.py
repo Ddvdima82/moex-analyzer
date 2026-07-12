@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS runs (
     target_price  REAL,
     upside_pct    REAL,
     scores_json   TEXT,
+    indicators_json TEXT,
     created_at    TEXT NOT NULL,
     PRIMARY KEY (run_date, ticker)
 );
@@ -43,6 +44,12 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.executescript(_SCHEMA)
+    # Миграция БД, созданных до появления indicators_json (CREATE IF NOT EXISTS
+    # не добавляет колонки в существующую таблицу)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+    if "indicators_json" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN indicators_json TEXT")
+        conn.commit()
     return conn
 
 
@@ -69,6 +76,7 @@ def save_run(
             r.get("target_price"),
             r.get("upside_pct"),
             json.dumps(r.get("scores", {}), ensure_ascii=False),
+            json.dumps(r.get("indicators", {}), ensure_ascii=False),
             created,
         )
         for r in results
@@ -81,8 +89,8 @@ def save_run(
             conn.execute("DELETE FROM runs WHERE run_date = ?", (run_date,))
             conn.executemany(
                 "INSERT INTO runs (run_date, ticker, company, price, final_score, "
-                "signal, target_price, upside_pct, scores_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "signal, target_price, upside_pct, scores_json, indicators_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         logger.info("Сохранено в БД: %d строк за %s", len(rows), run_date)

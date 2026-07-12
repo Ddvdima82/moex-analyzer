@@ -161,10 +161,13 @@ def compute_indicators(df: pd.DataFrame) -> dict[str, float | bool]:
         "position_52w": compute_52w_position(close),
         "volatility_pct": compute_volatility(close),
         "current_price": current_price,
+        "fallback": False,
     }
 
 
 def _empty_indicators() -> dict[str, float | bool]:
+    # fallback=True отличает нейтральные заглушки от реальных значений —
+    # потребители (delta-алерты) не должны трактовать их как рыночные данные
     return {
         "rsi": 50.0,
         "macd_histogram": 0.0,
@@ -178,6 +181,7 @@ def _empty_indicators() -> dict[str, float | bool]:
         "position_52w": 0.5,
         "volatility_pct": 0.0,
         "current_price": 0.0,
+        "fallback": True,
     }
 
 

@@ -193,6 +193,7 @@ def build_stock_result(
             "volume_trend_pct": indicators.get("volume_trend_pct"),
             "position_52w": indicators.get("position_52w"),
             "volatility_pct": indicators.get("volatility_pct"),
+            "fallback": bool(indicators.get("fallback", False)),
         },
         "fundamental": {
             "pe_ratio": fundamental_data.get("pe_ratio"),

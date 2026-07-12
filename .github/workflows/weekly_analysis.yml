@@ -54,6 +54,17 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py
 
+      # Страховка кэша: Actions Cache вытесняется (лимит 10GB, TTL 7 дней) —
+      # артефакт с retention 90 дней позволяет восстановить историю вручную.
+      # Стоит ДО delta_check: падение отправки дельты не должно отменять бэкап.
+      - name: Backup run history (artifact)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-db-backup
+          path: data/history.db
+          retention-days: 90
+
       - name: Send delta report (signal changes vs previous run)
         if: success()
         env:

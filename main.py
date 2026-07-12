@@ -83,6 +83,10 @@ def _process_ticker(
     # 1. Технический анализ (история за 260 торговых дней)
     try:
         history_df = get_history(ticker, days=260)
+        # get_history при сетевом сбое возвращает ПУСТОЙ DataFrame, не исключение —
+        # без этой проверки нейтральные индикаторы засчитались бы как реальные
+        if history_df is None or history_df.empty:
+            raise ValueError("история MOEX пуста")
         indicators = compute_indicators(history_df)
         tech_score = score_technical(indicators)
     except Exception as exc:

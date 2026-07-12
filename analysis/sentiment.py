@@ -391,13 +391,9 @@ def analyze_sentiment(ticker: str, company_name: str) -> dict[str, Any]:
 
 def score_sentiment(sentiment_data: dict[str, Any]) -> float:
     """
-    Скор сентимента от 0 до 100.
-    Базовый score из Claude. Штраф -10 если нет новостей.
+    Скор сентимента от 0 до 100 — балл модели с клэмпом в [0, 100].
+    Отсутствие новостей — НЕ негатив: остаётся нейтральный 50 (такой столп
+    и так помечается фолбэком и исключается из финального скора).
     """
     base_score = float(sentiment_data.get("sentiment_score", 50))
-
-    # Штраф только если новостей нет совсем (нейтральные — это тоже данные)
-    if not sentiment_data.get("news"):
-        base_score = max(base_score - 10, 0)
-
-    return round(base_score, 1)
+    return round(max(0.0, min(100.0, base_score)), 1)
