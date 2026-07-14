@@ -103,6 +103,43 @@ def save_run(
             conn.close()
 
 
+def has_run_earlier_this_week(
+    today: "date | None" = None,
+    db_path: Path | None = None,
+) -> bool:
+    """
+    True если в SQLite уже есть прогон на текущей ISO-неделе с датой РАНЬШЕ
+    сегодняшней. Управляет отправкой полного отчёта: он уходит в первый
+    успешный прогон недели (обычно понедельник; упал понедельник → вторник),
+    а не строго по дню недели. При ошибке чтения БД возвращает True —
+    консервативно молчим, а не спамим отчётом каждый день.
+    """
+    from datetime import datetime as _dt
+
+    today = today or today_msk()
+    iso_week = today.isocalendar()[:2]
+    try:
+        conn = _connect(db_path)
+        dates = [
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT run_date FROM runs WHERE run_date < ?",
+                (today.strftime("%Y-%m-%d"),),
+            )
+        ]
+        conn.close()
+    except Exception as exc:
+        logger.error("Ошибка чтения дат прогонов недели: %s", exc)
+        return True
+
+    for d in dates:
+        try:
+            if _dt.strptime(d, "%Y-%m-%d").date().isocalendar()[:2] == iso_week:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def get_prev_signals(
     before_date: str | None = None,
     db_path: Path | None = None,

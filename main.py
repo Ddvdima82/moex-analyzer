@@ -327,10 +327,13 @@ def main() -> None:
         # Сохраняем файлы
         save_results(results, macro=macro)
 
-        # Полный отчёт через Claude — только по понедельникам (ежедневный запуск)
-        is_monday = today_msk().weekday() == 0
-        if is_monday:
-            logger.info("=== ШАГ 7: Генерация отчёта через Claude ===")
+        # Полный отчёт — в ПЕРВЫЙ успешный прогон ISO-недели (обычно понедельник;
+        # упал понедельник из-за MOEX/сети → отчёт уйдёт со вторничным прогоном).
+        # save_results() уже записал сегодняшние строки, поэтому проверка
+        # смотрит только на даты строго раньше сегодняшней.
+        from data.store import has_run_earlier_this_week
+        if not has_run_earlier_this_week():
+            logger.info("=== ШАГ 7: Первый успешный прогон недели — генерация отчёта ===")
             report_text = generate_report(results, macro=macro)
             table_text = format_full_table(results)
             if tg_ok:
@@ -341,7 +344,7 @@ def main() -> None:
             else:
                 logger.info("=== ОТЧЁТ (консоль) ===\n%s\n%s", report_text, table_text)
         else:
-            logger.info("=== ШАГ 7: Не понедельник — полный отчёт пропущен, дашборд обновлён ===")
+            logger.info("=== ШАГ 7: Полный отчёт на этой неделе уже был — пропущен, дашборд обновлён ===")
 
         logger.info("========== АНАЛИЗ ЗАВЕРШЁН УСПЕШНО ==========")
 

@@ -74,6 +74,30 @@ def test_load_missing_date_empty(tmp_path):
     assert store.load_run("1999-01-01", db_path=db) == []
 
 
+def test_has_run_earlier_this_week(tmp_path):
+    from datetime import date
+    db = tmp_path / "h.db"
+    # 2026-07-13 — понедельник, 2026-07-14 — вторник той же ISO-недели
+    monday, tuesday = date(2026, 7, 13), date(2026, 7, 14)
+
+    # Пустая БД → первый прогон недели, отчёт нужен
+    assert store.has_run_earlier_this_week(today=tuesday, db_path=db) is False
+
+    # Прогон прошлой недели (пятница 10.07) не считается
+    store.save_run([_stock("SBER")], run_date="2026-07-10", db_path=db)
+    assert store.has_run_earlier_this_week(today=tuesday, db_path=db) is False
+
+    # Понедельник: более ранних прогонов этой недели нет даже при истории
+    assert store.has_run_earlier_this_week(today=monday, db_path=db) is False
+
+    # Успешный понедельник → вторник отчёт не шлёт
+    store.save_run([_stock("SBER")], run_date="2026-07-13", db_path=db)
+    assert store.has_run_earlier_this_week(today=tuesday, db_path=db) is True
+
+    # Сегодняшние строки (перезапуск за тот же день) не считаются «ранее»
+    assert store.has_run_earlier_this_week(today=monday, db_path=db) is False
+
+
 def test_get_prev_signals(tmp_path):
     db = tmp_path / "h.db"
     store.save_run([_stock("SBER", 80.0, "BUY")], run_date="2026-07-10", db_path=db)
