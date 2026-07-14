@@ -158,8 +158,8 @@ def evaluate_stored_runs(
     from data.store import _connect
 
     if history_provider is None:
-        from data.moex_api import get_history
-        history_provider = lambda t: get_history(t, days=400)  # noqa: E731
+        from data.history_cache import get_history_cached
+        history_provider = lambda t: get_history_cached(t, days=400)  # noqa: E731
 
     try:
         conn = _connect(db_path)
@@ -210,8 +210,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.ticker:
-        from data.moex_api import get_history
-        df = get_history(args.ticker, days=600)
+        from data.history_cache import get_history_cached
+        df = get_history_cached(args.ticker, days=600)
         if df.empty:
             print(f"Нет истории для {args.ticker}")
             return

@@ -10,7 +10,9 @@ def test_process_ticker_sentiment_fallback_flag(monkeypatch):
     """meta.sent_fallback выставляется, когда сентимент вернул error."""
     import analysis.sentiment as sent
 
-    monkeypatch.setattr(moex_api, "get_history", lambda t, days=260: __import__("pandas").DataFrame())
+    import data.history_cache as hc
+    monkeypatch.setattr(hc, "get_history_cached",
+                        lambda t, days=260, **kw: __import__("pandas").DataFrame())
     monkeypatch.setattr(moex_api, "calc_div_yield", lambda t, p: 5.0)
     monkeypatch.setattr(sent, "analyze_sentiment", lambda t, n: {"sentiment_score": 50, "error": "нет ключа"})
 

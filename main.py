@@ -73,7 +73,8 @@ def _process_ticker(
     чтобы пайплайн собрал сводку и тихая деградация была видимой.
     Вызывается из пула потоков — читает только разделяемые данные, не пишет.
     """
-    from data.moex_api import calc_div_yield, get_history
+    from data.moex_api import calc_div_yield
+    from data.history_cache import get_history_cached
     from analysis.fundamental import score_fundamental
     from analysis.technical import _empty_indicators, compute_indicators, score_technical
     from analysis.sentiment import analyze_sentiment, score_sentiment
@@ -83,8 +84,8 @@ def _process_ticker(
 
     # 1. Технический анализ (история за 260 торговых дней)
     try:
-        history_df = get_history(ticker, days=260)
-        # get_history при сетевом сбое возвращает ПУСТОЙ DataFrame, не исключение —
+        history_df = get_history_cached(ticker, days=260)
+        # при сетевом сбое возвращается ПУСТОЙ DataFrame, не исключение —
         # без этой проверки нейтральные индикаторы засчитались бы как реальные
         if history_df is None or history_df.empty:
             raise ValueError("история MOEX пуста")

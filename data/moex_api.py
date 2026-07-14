@@ -131,19 +131,24 @@ def get_current_quotes(tickers: list[str]) -> dict[str, dict[str, Any]]:
 # Исторические данные
 # ──────────────────────────────────────────────────────────────
 
-def get_history(ticker: str, days: int = 260) -> pd.DataFrame:
+def get_history(ticker: str, days: int = 260, from_date: str | None = None) -> pd.DataFrame:
     """
     Загружает историю торгов за последние `days` торговых дней.
     Возвращает DataFrame с колонками: TRADEDATE, OPEN, HIGH, LOW, CLOSE, VOLUME.
     При ошибке возвращает пустой DataFrame.
 
+    from_date ("YYYY-MM-DD") — явная нижняя граница вместо расчёта от `days`;
+    результат тогда НЕ обрезается по days (режим дельта-выборки для кэша).
+
     ВАЖНО: эндпоинт ISS отдаёт максимум 100 строк за один запрос — нужна
     постраничная выборка через курсор `start`. Берём запас по календарным
     дням (выходные/праздники), чтобы хватило `days` ТОРГОВЫХ дней для SMA200.
     """
-    # ~365 календарных дней ≈ 252 торговых; берём с запасом под нужное число дней
-    calendar_days = int(days * 1.6) + 60
-    from_date = (today_msk() - timedelta(days=calendar_days)).strftime("%Y-%m-%d")
+    trim_to_days = from_date is None
+    if from_date is None:
+        # ~365 календарных дней ≈ 252 торговых; берём с запасом под нужное число дней
+        calendar_days = int(days * 1.6) + 60
+        from_date = (today_msk() - timedelta(days=calendar_days)).strftime("%Y-%m-%d")
     url = (
         f"{MOEX_BASE_URL}/history/engines/stock/markets/shares"
         f"/boards/{MOEX_BOARD}/securities/{ticker}.json"
@@ -192,8 +197,11 @@ def get_history(ticker: str, days: int = 260) -> pd.DataFrame:
         df = df.sort_values("TRADEDATE").reset_index(drop=True)
 
         # Оставляем только последние `days` строк с данными
+        # (в режиме дельта-выборки по from_date возвращаем всё)
         df = df.dropna(subset=["CLOSE"])
-        df = df.tail(days).reset_index(drop=True)
+        if trim_to_days:
+            df = df.tail(days)
+        df = df.reset_index(drop=True)
 
         logger.info("История %s: %d строк", ticker, len(df))
         return df
