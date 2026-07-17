@@ -5,9 +5,11 @@ from analysis.technical import (
     _empty_indicators,
     compute_indicators,
     compute_macd,
+    compute_market_regime,
     compute_rsi,
     compute_sma,
     score_technical,
+    trim_price_gap,
 )
 
 
@@ -63,6 +65,81 @@ def test_compute_indicators_real_series():
     # При 250 точках SMA200 считается (раньше была всегда None из-за пагинации)
     assert ind["sma200"] is not None
     assert ind["above_sma200"] is True       # растущий ряд выше средней
+
+
+# ── Режим рынка по индексу ───────────────────────────────────────────────────
+
+def test_market_regime_bull():
+    df = pd.DataFrame({"CLOSE": [1000 + i for i in range(250)]})
+    out = compute_market_regime(df)
+    assert out["regime"] == "bull"
+    assert out["index_close"] is not None and out["index_sma200"] is not None
+
+
+def test_market_regime_bear():
+    df = pd.DataFrame({"CLOSE": [3000 - 5 * i for i in range(250)]})
+    assert compute_market_regime(df)["regime"] == "bear"
+
+
+def test_market_regime_insufficient_data_neutral():
+    df = pd.DataFrame({"CLOSE": [100.0] * 50})
+    assert compute_market_regime(df)["regime"] == "neutral"
+    assert compute_market_regime(pd.DataFrame())["regime"] == "neutral"
+
+
+# ── Детекция ценового разрыва (сплит/корпособытие) ───────────────────────────
+
+def test_trim_price_gap_reverse_split():
+    """Реверс-сплит (стиль VTBR 5000:1): остаётся только пост-сплитовое окно."""
+    closes = [0.02] * 60 + [100.0] * 40
+    df = pd.DataFrame({"CLOSE": closes, "VOLUME": [1000] * 100})
+    out, gap = trim_price_gap(df)
+    assert gap is True
+    assert len(out) == 40
+    assert (out["CLOSE"] == 100.0).all()
+
+
+def test_trim_price_gap_normal_series_untouched():
+    df = pd.DataFrame({"CLOSE": [100 + i for i in range(50)]})
+    out, gap = trim_price_gap(df)
+    assert gap is False
+    assert len(out) == 50
+
+
+def test_trim_price_gap_dividend_gap_untouched():
+    """Дивидендный гэп −15% ниже порога — история не режется."""
+    closes = [100.0] * 30 + [85.0] * 30
+    df = pd.DataFrame({"CLOSE": closes})
+    out, gap = trim_price_gap(df)
+    assert gap is False
+    assert len(out) == 60
+
+
+def test_trim_price_gap_multiple_gaps_uses_last():
+    """Два разрыва → окно от последнего."""
+    closes = [100.0] * 20 + [10.0] * 20 + [200.0] * 10
+    df = pd.DataFrame({"CLOSE": closes})
+    out, gap = trim_price_gap(df)
+    assert gap is True
+    assert len(out) == 10
+    assert (out["CLOSE"] == 200.0).all()
+
+
+def test_trim_price_gap_zero_price_bar_not_a_gap():
+    """Единичный битый бар CLOSE=0 (дефект данных) — не разрыв, история цела."""
+    closes = [100.0] * 30 + [0.0] + [100.0] * 29
+    df = pd.DataFrame({"CLOSE": closes})
+    out, gap = trim_price_gap(df)
+    assert gap is False
+    assert len(out) == 60
+
+
+def test_trim_price_gap_empty_and_short():
+    out, gap = trim_price_gap(pd.DataFrame())
+    assert gap is False and out.empty
+    one = pd.DataFrame({"CLOSE": [100.0]})
+    out, gap = trim_price_gap(one)
+    assert gap is False and len(out) == 1
 
 
 # ── Непрерывность RSI на границах 30/70 (регресс на исправление #4) ──────────

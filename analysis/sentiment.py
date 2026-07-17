@@ -389,11 +389,36 @@ def analyze_sentiment(ticker: str, company_name: str) -> dict[str, Any]:
 # Скоринг 0–100
 # ──────────────────────────────────────────────────────────────
 
+_IMPACT_WEIGHTS = {"high": 2.0, "medium": 1.2, "low": 0.6}
+_SENTIMENT_SIGN = {"positive": 1.0, "negative": -1.0, "neutral": 0.0}
+
+
 def score_sentiment(sentiment_data: dict[str, Any]) -> float:
     """
-    Скор сентимента от 0 до 100 — балл модели с клэмпом в [0, 100].
+    Скор сентимента от 0 до 100. Смешивает общий балл модели (holistic
+    sentiment_score) с impact-взвешенным пересчётом по списку новостей —
+    иначе одна катастрофическая новость (impact=high) тонет среди нескольких
+    нейтральных штук и не двигает итоговый скор (см. промпт: модель уже
+    проставляет impact на каждую новость, но раньше это поле не читалось).
     Отсутствие новостей — НЕ негатив: остаётся нейтральный 50 (такой столп
     и так помечается фолбэком и исключается из финального скора).
     """
     base_score = float(sentiment_data.get("sentiment_score", 50))
-    return round(max(0.0, min(100.0, base_score)), 1)
+    base_score = max(0.0, min(100.0, base_score))
+
+    news = sentiment_data.get("news") or []
+    total_weight = 0.0
+    total_signed = 0.0
+    for item in news:
+        impact = str(item.get("impact", "low")).lower()
+        weight = _IMPACT_WEIGHTS.get(impact, 0.6)
+        sign = _SENTIMENT_SIGN.get(str(item.get("sentiment", "neutral")).lower(), 0.0)
+        total_weight += weight
+        total_signed += weight * sign
+
+    if total_weight == 0:
+        return round(base_score, 1)
+
+    weighted_score = 50.0 + (total_signed / total_weight) * 50.0
+    blended = 0.5 * weighted_score + 0.5 * base_score
+    return round(max(0.0, min(100.0, blended)), 1)

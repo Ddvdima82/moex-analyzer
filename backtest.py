@@ -89,7 +89,7 @@ def walk_forward_technical(
     Возвращает метрики и `edge` = mean_return(long) − mean_return(short):
     положительный edge → у технического скора есть предсказательная сила.
     """
-    from analysis.technical import compute_indicators, score_technical
+    from analysis.technical import compute_indicators, score_technical, trim_price_gap
 
     closes = df["CLOSE"].astype(float).reset_index(drop=True)
     n = len(df)
@@ -98,7 +98,9 @@ def walk_forward_technical(
     flat = 0
 
     for i in range(warmup, n - horizon):
-        window = df.iloc[: i + 1]
+        # тот же препроцессинг, что в проде (main._process_ticker): окно после
+        # ценового разрыва — иначе edge меряется на данных, которых прод не видит
+        window, _ = trim_price_gap(df.iloc[: i + 1])
         score = score_technical(compute_indicators(window))
         fwd = (closes.iloc[i + horizon] / closes.iloc[i] - 1.0) * 100.0
         if score >= long_th:

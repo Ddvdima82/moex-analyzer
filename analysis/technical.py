@@ -11,6 +11,8 @@ import math
 import numpy as np
 import pandas as pd
 
+from config import PRICE_GAP_THRESHOLD
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +117,44 @@ def compute_52w_position(close: pd.Series) -> float:
     return round((current - low_52) / (high_52 - low_52), 4)
 
 
+def compute_bollinger_pctb(close: pd.Series, period: int = 20, num_std: float = 2.0) -> float | None:
+    """
+    %B — позиция цены в полосах Боллинджера: 0 = нижняя, 1 = верхняя,
+    >1 / <0 — пробой полосы. None при нехватке данных.
+    """
+    if len(close) < period:
+        return None
+    sma = float(close.rolling(period).mean().iloc[-1])
+    std = float(close.rolling(period).std().iloc[-1])
+    if std == 0:
+        return 0.5
+    lower = sma - num_std * std
+    upper = sma + num_std * std
+    return round((float(close.iloc[-1]) - lower) / (upper - lower), 4)
+
+
+def compute_atr_pct(df: pd.DataFrame, period: int = 14) -> float | None:
+    """
+    ATR (Average True Range, сглаживание Wilder'а) в % от текущей цены —
+    дневной диапазон хода, база для стоп-лоссов. None при нехватке данных
+    или отсутствии колонок HIGH/LOW.
+    """
+    if len(df) < period + 1 or not {"HIGH", "LOW", "CLOSE"}.issubset(df.columns):
+        return None
+    high = df["HIGH"].astype(float)
+    low = df["LOW"].astype(float)
+    close = df["CLOSE"].astype(float)
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1).dropna()
+    atr = float(tr.ewm(alpha=1.0 / period, adjust=False).mean().iloc[-1])
+    price = float(close.iloc[-1])
+    if price <= 0:
+        return None
+    return round(atr / price * 100, 2)
+
+
 def compute_volatility(close: pd.Series, period: int = 20) -> float:
     """Аннуализированная историческая волатильность в %."""
     if len(close) < period + 1:
@@ -125,6 +165,62 @@ def compute_volatility(close: pd.Series, period: int = 20) -> float:
     annualized = daily_vol * np.sqrt(252) * 100
 
     return round(annualized, 2)
+
+
+def compute_market_regime(df: pd.DataFrame) -> dict[str, float | str | None]:
+    """
+    Режим рынка по истории индекса (IMOEX): bear — закрытие ниже SMA200,
+    bull — выше/равно, neutral — данных не хватает (SMA200 не считается).
+    Потребитель — get_signal: в bear-режиме порог входа в BUY поднимается
+    (контрарная система в системном обвале не должна ловить нож).
+    """
+    out: dict[str, float | str | None] = {
+        "regime": "neutral",
+        "index_close": None,
+        "index_sma200": None,
+    }
+    if df is None or df.empty or "CLOSE" not in df.columns:
+        return out
+
+    close = df["CLOSE"].astype(float)
+    out["index_close"] = round(float(close.iloc[-1]), 2)
+    sma200 = compute_sma(close, 200)
+    out["index_sma200"] = sma200
+    if sma200 is None:
+        return out
+    out["regime"] = "bear" if float(close.iloc[-1]) < sma200 else "bull"
+    return out
+
+
+def trim_price_gap(
+    df: pd.DataFrame,
+    threshold: float = PRICE_GAP_THRESHOLD,
+) -> tuple[pd.DataFrame, bool]:
+    """
+    Отрезает историю до последнего ценового разрыва |ΔCLOSE| > threshold —
+    сплит/консолидация/реструктуризация (VTBR 5000:1 в 2024, редомициляции).
+    MOEX ISS отдаёт сырые цены без ретро-корректировки, поэтому индикаторы на
+    смешанном до/после-сплитовом ряду бессмысленны: SMA/RSI/52w ловят скачок
+    как движение рынка. Дивидендные гэпы (<20%) порог не задевает.
+
+    Возвращает (обрезанный df c барами от разрыва включительно, был ли разрыв).
+    Если после обрезки баров мало — индикаторы деградируют в нейтральные
+    значения штатно (per-indicator фолбэки в compute_*).
+    """
+    if df.empty or "CLOSE" not in df.columns or len(df) < 2:
+        return df, False
+
+    close = df["CLOSE"].astype(float)
+    change = close.pct_change()
+    # Битые бары (CLOSE<=0, NaN) дают ±inf/−1 в pct_change — это дефект данных,
+    # а не корпособытие; такие переходы не считаем разрывом
+    change = change.where(np.isfinite(change) & (close.shift(1) > 0) & (close > 0))
+    jumps = change.abs() > threshold
+    if not jumps.any():
+        return df, False
+
+    pos = int(np.where(jumps.to_numpy())[0][-1])
+    return df.iloc[pos:].reset_index(drop=True), True
 
 
 # ──────────────────────────────────────────────────────────────
@@ -160,6 +256,8 @@ def compute_indicators(df: pd.DataFrame) -> dict[str, float | bool]:
         "volume_trend_pct": compute_volume_trend(volume) if not volume.empty else 0.0,
         "position_52w": compute_52w_position(close),
         "volatility_pct": compute_volatility(close),
+        "bb_pctb": compute_bollinger_pctb(close),
+        "atr_pct": compute_atr_pct(df),
         "current_price": current_price,
         "fallback": False,
     }
@@ -180,6 +278,8 @@ def _empty_indicators() -> dict[str, float | bool]:
         "volume_trend_pct": 0.0,
         "position_52w": 0.5,
         "volatility_pct": 0.0,
+        "bb_pctb": None,
+        "atr_pct": None,
         "current_price": 0.0,
         "fallback": True,
     }

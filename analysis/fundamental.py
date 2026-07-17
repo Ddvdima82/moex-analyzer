@@ -10,7 +10,12 @@ import logging
 from datetime import date, datetime
 from typing import Any
 
-from config import FUNDAMENTALS_FILE, FUNDAMENTALS_MAX_AGE_DAYS, today_msk
+from config import (
+    FUNDAMENTALS_FILE,
+    FUNDAMENTALS_MAX_AGE_DAYS,
+    FUNDAMENTALS_STALE_DAYS,
+    today_msk,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +26,28 @@ _REQUIRED_NUMERIC = ("pe_ratio", "debt_ebitda", "roe_pct", "net_margin_pct")
 # ──────────────────────────────────────────────────────────────
 # Загрузка и валидация данных
 # ──────────────────────────────────────────────────────────────
+
+def fund_age_days(data: dict[str, Any]) -> int | None:
+    """Возраст записи в днях по last_updated. None — дата отсутствует/битая."""
+    last = data.get("last_updated")
+    if not last:
+        return None
+    try:
+        return (today_msk() - datetime.strptime(last, "%Y-%m-%d").date()).days
+    except (ValueError, TypeError):
+        return None
+
+
+def is_fund_stale(data: dict[str, Any]) -> bool:
+    """
+    True — данные старше FUNDAMENTALS_STALE_DAYS: фундаментальный столп надо
+    исключить из финального скора (см. valid-механизм в main/_process_ticker).
+    Неизвестный возраст (нет/битый last_updated) консервативно считается
+    устаревшим — свежесть недоказуема, доверять скору нельзя.
+    """
+    age = fund_age_days(data)
+    return age is None or age > FUNDAMENTALS_STALE_DAYS
+
 
 def _validate_entry(ticker: str, data: Any) -> bool:
     """Проверяет одну запись fundamentals. True — запись пригодна для скоринга."""
@@ -38,20 +65,24 @@ def _validate_entry(ticker: str, data: Any) -> bool:
     if not data.get("sector"):
         logger.warning("fundamentals[%s]: не задан 'sector' — будет 'unknown'", ticker)
 
-    # Проверка свежести (не блокирующая)
-    last = data.get("last_updated")
-    if last:
-        try:
-            age = (today_msk() - datetime.strptime(last, "%Y-%m-%d").date()).days
-            if age > FUNDAMENTALS_MAX_AGE_DAYS:
-                logger.warning(
-                    "fundamentals[%s]: данные устарели (%d дн., last_updated=%s)",
-                    ticker, age, last,
-                )
-        except ValueError:
-            logger.warning("fundamentals[%s]: некорректный формат last_updated=%s", ticker, last)
-    else:
-        logger.warning("fundamentals[%s]: нет поля last_updated", ticker)
+    # Проверка свежести (не блокирующая; жёсткое исключение столпа при
+    # возрасте > FUNDAMENTALS_STALE_DAYS делает is_fund_stale в main)
+    age = fund_age_days(data)
+    if age is None:
+        logger.warning(
+            "fundamentals[%s]: нет или битое поле last_updated (%s) — столп будет исключён",
+            ticker, data.get("last_updated"),
+        )
+    elif age > FUNDAMENTALS_STALE_DAYS:
+        logger.error(
+            "fundamentals[%s]: данные устарели критически (%d дн. > %d) — столп будет исключён",
+            ticker, age, FUNDAMENTALS_STALE_DAYS,
+        )
+    elif age > FUNDAMENTALS_MAX_AGE_DAYS:
+        logger.warning(
+            "fundamentals[%s]: данные устарели (%d дн., last_updated=%s) — пора обновить",
+            ticker, age, data.get("last_updated"),
+        )
 
     return ok
 

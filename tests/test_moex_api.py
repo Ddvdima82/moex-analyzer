@@ -1,4 +1,7 @@
 """Тесты разбора ответов MOEX ISS (data/moex_api.py) без сети."""
+from datetime import timedelta
+
+from config import today_msk
 from data import moex_api
 
 
@@ -66,3 +69,32 @@ def test_get_current_quotes_parsing(monkeypatch):
 def test_get_current_quotes_no_data(monkeypatch):
     monkeypatch.setattr(moex_api, "_get", lambda url, params=None: None)
     assert moex_api.get_current_quotes(["SBER"]) == {}
+
+
+def _dividends_response(rows):
+    return {"dividends": {"columns": ["registryclosedate", "value"], "data": rows}}
+
+
+def test_calc_div_yield_excludes_future_announced_payout(monkeypatch):
+    """Объявленная будущая отсечка не должна попадать в trailing-расчёт —
+    она учитывается отдельно (forward-добавка в main.py), иначе задвоение."""
+    today = today_msk()
+    within_year = (today - timedelta(days=30)).strftime("%Y-%m-%d")
+    future = (today + timedelta(days=60)).strftime("%Y-%m-%d")
+    rows = [[future, 25.0], [within_year, 10.0]]
+    monkeypatch.setattr(
+        moex_api, "_get", lambda url, params=None: _dividends_response(rows)
+    )
+    # Только within_year (10.0) должен войти в trailing; future (25.0) — нет
+    assert moex_api.calc_div_yield("SBER", 100.0) == 10.0
+
+
+def test_calc_div_yield_excludes_payout_older_than_a_year(monkeypatch):
+    today = today_msk()
+    within_year = (today - timedelta(days=30)).strftime("%Y-%m-%d")
+    too_old = (today - timedelta(days=400)).strftime("%Y-%m-%d")
+    rows = [[within_year, 10.0], [too_old, 20.0]]
+    monkeypatch.setattr(
+        moex_api, "_get", lambda url, params=None: _dividends_response(rows)
+    )
+    assert moex_api.calc_div_yield("SBER", 100.0) == 10.0

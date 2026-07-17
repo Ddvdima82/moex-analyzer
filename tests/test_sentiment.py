@@ -105,10 +105,28 @@ def test_score_sentiment_clamped():
 
 
 def test_score_sentiment_with_news():
+    # Impact-взвешенный пересчёт блендится 50/50 с holistic-баллом модели:
+    # positive+high → weighted_score=100, blend с base=72 → 86.0
     data = {
         "sentiment_score": 72,
         "positive_count": 3,
         "negative_count": 1,
         "news": [{"headline": "рост", "sentiment": "positive", "impact": "high"}],
     }
-    assert sent.score_sentiment(data) == 72.0
+    assert sent.score_sentiment(data) == 86.0
+
+
+def test_score_sentiment_high_impact_negative_outweighs_neutral_noise():
+    # 1 катастрофическая новость (impact=high, negative) не должна тонуть
+    # среди нескольких нейтральных — раньше impact вообще не читался
+    data = {
+        "sentiment_score": 45,
+        "news": [
+            {"headline": "n1", "sentiment": "neutral", "impact": "low"},
+            {"headline": "n2", "sentiment": "neutral", "impact": "low"},
+            {"headline": "n3", "sentiment": "neutral", "impact": "low"},
+            {"headline": "крах", "sentiment": "negative", "impact": "high"},
+        ],
+    }
+    score = sent.score_sentiment(data)
+    assert score < 45.0

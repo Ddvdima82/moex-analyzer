@@ -65,6 +65,7 @@ def _process_ticker(
     cbr_rate: float | None = None,
     upcoming_div: dict | None = None,
     prev_signal: str | None = None,
+    market_regime: str | None = None,
 ) -> tuple[dict, dict]:
     """
     Обрабатывает один тикер (технич. + фундам. + сентимент → итог).
@@ -75,12 +76,18 @@ def _process_ticker(
     """
     from data.moex_api import calc_div_yield
     from data.history_cache import get_history_cached
-    from analysis.fundamental import score_fundamental
-    from analysis.technical import _empty_indicators, compute_indicators, score_technical
+    from analysis.fundamental import is_fund_stale, score_fundamental
+    from analysis.technical import (
+        _empty_indicators,
+        compute_indicators,
+        score_technical,
+        trim_price_gap,
+    )
     from analysis.sentiment import analyze_sentiment, score_sentiment
     from scoring.final_score import build_stock_result
 
-    meta = {"tech_fallback": False, "fund_neutral": False, "sent_fallback": False}
+    meta = {"tech_fallback": False, "fund_neutral": False,
+            "fund_stale": False, "sent_fallback": False}
 
     # 1. Технический анализ (история за 260 торговых дней)
     try:
@@ -89,6 +96,13 @@ def _process_ticker(
         # без этой проверки нейтральные индикаторы засчитались бы как реальные
         if history_df is None or history_df.empty:
             raise ValueError("история MOEX пуста")
+        # сплит/корпособытие → индикаторы только на пост-разрывном окне
+        history_df, gap = trim_price_gap(history_df)
+        if gap:
+            logger.warning(
+                "Ценовой разрыв в истории %s (сплит/корпособытие?) — "
+                "индикаторы на %d барах после разрыва", ticker, len(history_df),
+            )
         indicators = compute_indicators(history_df)
         tech_score = score_technical(indicators)
     except Exception as exc:
@@ -102,11 +116,22 @@ def _process_ticker(
     try:
         fund_data = fundamentals.get(ticker, {}).copy()
         if fund_data:
-            fund_data["div_yield_pct"] = calc_div_yield(ticker, current_price)
+            trailing_yield = calc_div_yield(ticker, current_price)
+            forward_yield = 0.0
             if upcoming_div:
                 fund_data["ex_date"] = upcoming_div.get("ex_date")
                 fund_data["next_div_amount"] = upcoming_div.get("amount")
+                next_amount = upcoming_div.get("amount")
+                if next_amount and current_price > 0:
+                    forward_yield = float(next_amount) / current_price * 100
+            fund_data["div_yield_pct"] = round(trailing_yield + forward_yield, 2)
             fund_score = score_fundamental(fund_data, sector_medians, cbr_rate=cbr_rate)
+            # Критически устаревшие данные (> FUNDAMENTALS_STALE_DAYS) не должны
+            # управлять сигналом: скор остаётся в отчёте, но столп исключается
+            # из финального балла (valid → перенормировка весов + ниже confidence)
+            if is_fund_stale(fund_data):
+                logger.warning("Фундаментал %s критически устарел — исключён из итогового скора", ticker)
+                meta["fund_stale"] = True
         else:
             logger.warning("Нет фундаментальных данных для %s — нейтральный скор", ticker)
             fund_data = {}
@@ -132,7 +157,7 @@ def _process_ticker(
         meta["sent_fallback"] = True
 
     valid = {
-        "fundamental": not meta["fund_neutral"],
+        "fundamental": not (meta["fund_neutral"] or meta["fund_stale"]),
         "technical": not meta["tech_fallback"],
         "sentiment": not meta["sent_fallback"],
     }
@@ -148,6 +173,7 @@ def _process_ticker(
         sentiment_data=sentiment_data,
         valid=valid,
         prev_signal=prev_signal,
+        market_regime=market_regime,
     )
     logger.info(
         "%s: ИТОГ score=%.1f → %s | цель=%.2f (%.1f%%)",
@@ -182,6 +208,19 @@ def run_pipeline() -> tuple[list[dict], dict]:
     from data.macro import fetch_macro
     macro = fetch_macro()
 
+    # 2.6. Режим рынка по IMOEX (bear → выше порог входа в BUY).
+    # Ошибка выборки → neutral: фильтр просто не вмешивается.
+    from data.moex_api import get_index_history
+    from analysis.technical import compute_market_regime
+    regime_info = compute_market_regime(get_index_history())
+    market_regime = regime_info["regime"]
+    macro["market_regime"] = market_regime
+    macro["imoex_sma200"] = regime_info["index_sma200"]
+    logger.info(
+        "Режим рынка: %s (IMOEX=%s, SMA200=%s)",
+        market_regime, regime_info["index_close"], regime_info["index_sma200"],
+    )
+
     # 3. Список к обработке (только с валидной ценой)
     worklist = []
     skipped_no_price = 0
@@ -197,13 +236,22 @@ def run_pipeline() -> tuple[list[dict], dict]:
     logger.info("=== ШАГ 3: Батч-сентимент + дивидендный календарь ===")
     from analysis.sentiment import batch_analyze_sentiment
     from data.moex_api import get_upcoming_dividends
+    from data.dividend_calendar import get_upcoming_dividends_smartlab
     tickers_list = [t for t, _, _ in worklist]
-    with ThreadPoolExecutor(max_workers=2) as pre:
+    with ThreadPoolExecutor(max_workers=3) as pre:
         sent_fut = pre.submit(batch_analyze_sentiment, [(t, name) for t, name, _ in worklist])
         div_fut = pre.submit(get_upcoming_dividends, tickers_list)
+        smart_fut = pre.submit(get_upcoming_dividends_smartlab, tickers_list)
         sent_fut.result()
-        upcoming_divs = div_fut.result()
-    logger.info("Предстоящих дивидендов: %d", len(upcoming_divs))
+        iss_divs = div_fut.result()
+        smart_divs = smart_fut.result()
+    # ISS приоритетен (первоисточник), smart-lab закрывает его слепоту к
+    # будущим отсечкам (ISS отдаёт их с лагом или не отдаёт вовсе)
+    upcoming_divs = {**smart_divs, **iss_divs}
+    logger.info(
+        "Предстоящих дивидендов: %d (ISS=%d, smart-lab=%d)",
+        len(upcoming_divs), len(iss_divs), len(smart_divs),
+    )
 
     cbr_rate = macro.get("cbr_rate")
 
@@ -216,13 +264,14 @@ def run_pipeline() -> tuple[list[dict], dict]:
     # 5. Параллельная обработка (сентимент берётся из кэша — API не вызывается)
     logger.info("=== ШАГ 4: Анализ %d тикеров (%d воркеров) ===", len(worklist), TICKER_MAX_WORKERS)
     results: list[dict] = []
-    summary = {"tech_fallback": 0, "fund_neutral": 0, "sent_fallback": 0, "errors": 0}
+    summary = {"tech_fallback": 0, "fund_neutral": 0, "fund_stale": 0,
+               "sent_fallback": 0, "errors": 0}
 
     with ThreadPoolExecutor(max_workers=TICKER_MAX_WORKERS) as ex:
         futures = {
             ex.submit(
                 _process_ticker, t, name, price, fundamentals, sector_medians,
-                cbr_rate, upcoming_divs.get(t), prev_signals.get(t),
+                cbr_rate, upcoming_divs.get(t), prev_signals.get(t), market_regime,
             ): t
             for t, name, price in worklist
         }
@@ -235,7 +284,7 @@ def run_pipeline() -> tuple[list[dict], dict]:
                 summary["errors"] += 1
                 continue
             results.append(result)
-            for key in ("tech_fallback", "fund_neutral", "sent_fallback"):
+            for key in ("tech_fallback", "fund_neutral", "fund_stale", "sent_fallback"):
                 if meta[key]:
                     summary[key] += 1
 
@@ -244,9 +293,10 @@ def run_pipeline() -> tuple[list[dict], dict]:
     # 5. Сводка прогона — делает тихую деградацию видимой
     logger.info(
         "=== Pipeline завершён: обработано %d | пропущено(нет цены) %d | "
-        "ошибок %d | фолбэк техн=%d фундам=%d сентимент=%d ===",
+        "ошибок %d | фолбэк техн=%d фундам=%d устар.фундам=%d сентимент=%d ===",
         len(results), skipped_no_price, summary["errors"],
-        summary["tech_fallback"], summary["fund_neutral"], summary["sent_fallback"],
+        summary["tech_fallback"], summary["fund_neutral"],
+        summary["fund_stale"], summary["sent_fallback"],
     )
     return results, macro
 

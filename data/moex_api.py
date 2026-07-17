@@ -211,6 +211,67 @@ def get_history(ticker: str, days: int = 260, from_date: str | None = None) -> p
         return pd.DataFrame()
 
 
+def get_index_history(secid: str = "IMOEX", days: int = 260) -> pd.DataFrame:
+    """
+    История значений индекса (борд SNDX) за последние `days` торговых дней.
+    Возвращает DataFrame с TRADEDATE (datetime) и CLOSE; пустой при ошибке.
+    Нужна для режимного фильтра рынка (IMOEX против своей SMA200).
+    """
+    calendar_days = int(days * 1.6) + 60
+    from_date = (today_msk() - timedelta(days=calendar_days)).strftime("%Y-%m-%d")
+    url = (
+        f"{MOEX_BASE_URL}/history/engines/stock/markets/index"
+        f"/boards/SNDX/securities/{secid}.json"
+    )
+
+    columns: list[str] = []
+    rows: list[list] = []
+    page_size = 100
+    max_pages = 30
+    start = 0
+
+    for _ in range(max_pages):
+        params = {
+            "from": from_date,
+            "start": start,
+            "iss.meta": "off",
+            "iss.only": "history",
+        }
+        data = _get(url, params)
+        if not data:
+            break
+        hist = data.get("history", {})
+        if not columns:
+            columns = hist.get("columns", [])
+        page_rows: list[list] = hist.get("data", [])
+        if not page_rows:
+            break
+        rows.extend(page_rows)
+        if len(page_rows) < page_size:
+            break
+        start += len(page_rows)
+
+    if not rows:
+        logger.warning("Нет истории индекса %s", secid)
+        return pd.DataFrame()
+
+    try:
+        df = pd.DataFrame(rows, columns=columns)
+        df = df[[c for c in ("TRADEDATE", "CLOSE") if c in df.columns]].copy()
+        df["TRADEDATE"] = pd.to_datetime(df["TRADEDATE"])
+        df = (
+            df.dropna(subset=["CLOSE"])
+            .sort_values("TRADEDATE")
+            .tail(days)
+            .reset_index(drop=True)
+        )
+        logger.info("История индекса %s: %d строк", secid, len(df))
+        return df
+    except Exception as exc:
+        logger.error("Ошибка разбора истории индекса %s: %s", secid, exc, exc_info=True)
+        return pd.DataFrame()
+
+
 # ──────────────────────────────────────────────────────────────
 # Дивиденды
 # ──────────────────────────────────────────────────────────────
@@ -272,7 +333,9 @@ def get_upcoming_dividends(tickers: list[str]) -> dict[str, dict[str, Any]]:
 
 def calc_div_yield(ticker: str, current_price: float) -> float:
     """
-    Рассчитывает дивидендную доходность за последние 12 месяцев в %.
+    Рассчитывает дивидендную доходность за последние 12 месяцев в %
+    (только фактически прошедшие отсечки — без учёта будущих объявленных выплат,
+    те считаются отдельно в get_upcoming_dividends и приплюсовываются в main.py).
     Возвращает 0.0 если данных нет.
     """
     if current_price <= 0:
@@ -282,12 +345,15 @@ def calc_div_yield(ticker: str, current_price: float) -> float:
     if not divs:
         return 0.0
 
-    # Берём выплаты за последний год
+    # Берём выплаты строго за последний год (нижняя И верхняя граница —
+    # без верхней границы будущие объявленные отсечки из топ-5 списка MOEX
+    # утекали бы в "trailing" расчёт и задваивались бы с forward-добавкой)
+    today_str = today_msk().strftime("%Y-%m-%d")
     one_year_ago = (today_msk() - timedelta(days=365)).strftime("%Y-%m-%d")
     annual_div = sum(
         float(d.get("value") or 0)
         for d in divs
-        if (d.get("registryclosedate") or "") >= one_year_ago
+        if one_year_ago <= (d.get("registryclosedate") or "") <= today_str
     )
 
     return round(annual_div / current_price * 100, 2)

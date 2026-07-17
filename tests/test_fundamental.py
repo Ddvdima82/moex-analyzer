@@ -3,7 +3,9 @@ from datetime import date, timedelta
 
 from analysis.fundamental import (
     _validate_entry,
+    fund_age_days,
     get_sector_medians,
+    is_fund_stale,
     score_fundamental,
 )
 
@@ -41,6 +43,36 @@ def test_validate_entry_stale_still_valid(caplog):
     # Устаревшие данные валидны для скоринга, но логируют предупреждение
     old = (date.today() - timedelta(days=400)).strftime("%Y-%m-%d")
     assert _validate_entry("X", _good_entry(last_updated=old)) is True
+
+
+# ── Жёсткое устаревание: исключение столпа из финального скора ──────────────
+
+def test_is_fund_stale_fresh_data():
+    assert is_fund_stale(_good_entry()) is False
+
+
+def test_is_fund_stale_old_data():
+    old = (date.today() - timedelta(days=300)).strftime("%Y-%m-%d")
+    assert is_fund_stale(_good_entry(last_updated=old)) is True
+
+
+def test_is_fund_stale_missing_date_conservative():
+    """Нет last_updated → свежесть недоказуема → считается устаревшим."""
+    e = _good_entry()
+    del e["last_updated"]
+    assert is_fund_stale(e) is True
+
+
+def test_is_fund_stale_broken_date_conservative():
+    assert is_fund_stale(_good_entry(last_updated="июнь 2026")) is True
+
+
+def test_fund_age_days():
+    e = _good_entry(last_updated=(date.today() - timedelta(days=10)).strftime("%Y-%m-%d"))
+    age = fund_age_days(e)
+    # МСК-дата может отличаться от локальной на ±1 день у полуночи
+    assert age is not None and 9 <= age <= 11
+    assert fund_age_days({}) is None
 
 
 def test_sector_medians():

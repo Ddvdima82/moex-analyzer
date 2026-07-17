@@ -107,6 +107,13 @@ SIGNAL_THRESHOLDS: dict[str, int] = {
 # когда скор отходит от порога дальше этой величины (BUY держится до <56).
 # Убирает хлопанье BUY↔HOLD при дрожании скора на 1–2 пункта (шум сентимента).
 SIGNAL_HYSTERESIS: float = 4.0
+# Режимный фильтр рынка: при медвежьем режиме (IMOEX ниже своей SMA200)
+# порог входа в BUY поднимается на эту величину. Система контрарная
+# (mean-reversion), и в системном обвале «перепродано» — не повод покупать:
+# фильтр требует от бумаги заметно больше качества, чтобы ловить нож.
+BEAR_BUY_EXTRA: float = 5.0
+# Маркер «скорая отсечка» в отчёте: ex-date в пределах стольких дней
+EX_DATE_SOON_DAYS: int = 7
 
 # ──────────────────────────────────────────────────────────────
 # MOEX ISS API
@@ -153,6 +160,13 @@ LOGS_DIR: pathlib.Path = BASE_DIR / "logs"
 FUNDAMENTALS_FILE: pathlib.Path = BASE_DIR / "data" / "fundamentals.json"
 # Максимальный возраст фундаментальных данных (дни) — старше → предупреждение
 FUNDAMENTALS_MAX_AGE_DAYS: int = 120
+# Жёсткий порог устаревания (дни): старше → фундаментальный столп ИСКЛЮЧАЕТСЯ
+# из финального скора (перенормировка весов, как при фолбэке). Два пропущенных
+# квартальных обновления — данные уже не отражают отчётность.
+FUNDAMENTALS_STALE_DAYS: int = 240
+# Порог дневного разрыва CLOSE (доля цены) для детекции сплита/корпособытия.
+# Выше любого дивидендного гэпа (<20%), но ловит сплиты (VTBR 5000:1 в 2024).
+PRICE_GAP_THRESHOLD: float = 0.40
 # SQLite-хранилище истории прогонов (для будущего бэктеста)
 STORE_FILE: pathlib.Path = BASE_DIR / "data" / "history.db"
 # Самодостаточный HTML-дашборд (публикуется на GitHub Pages из docs/)
@@ -191,6 +205,11 @@ def validate_config() -> list[str]:
     if SIGNAL_HYSTERESIS < 0 or buy - SIGNAL_HYSTERESIS <= sell + SIGNAL_HYSTERESIS:
         raise ValueError(
             f"Некорректный SIGNAL_HYSTERESIS={SIGNAL_HYSTERESIS} для порогов BUY={buy}/SELL={sell}"
+        )
+    # Сдвинутый bear-порог BUY должен оставаться валидным
+    if BEAR_BUY_EXTRA < 0 or buy + BEAR_BUY_EXTRA > 100:
+        raise ValueError(
+            f"Некорректный BEAR_BUY_EXTRA={BEAR_BUY_EXTRA}: BUY+extra выходит за [0, 100]"
         )
 
     if TICKER_MAX_WORKERS < 1:

@@ -15,6 +15,7 @@ from config import (
     CLAUDE_MAX_TOKENS,
     CLAUDE_MODEL,
     CLAUDE_TIMEOUT,
+    EX_DATE_SOON_DAYS,
     USE_CLAUDE_REPORT,
     today_msk,
 )
@@ -42,6 +43,7 @@ REPORT_PROMPT = """Ты опытный аналитик инвестиционн
 4. Топ-3 на продажу / избегать с обоснованием
 5. target_price называй «ориентиром» (это статистическая оценка от волатильности, НЕ аналитическая целевая цена)
 6. НЕ включай полную таблицу — она будет добавлена отдельно
+7. Если у бумаги указана скорая дивидендная отсечка (ex_date) — обязательно предупреди о дивидендном гэпе после отсечки
 
 Стиль: профессиональный, конкретный, без воды.
 Язык: русский.
@@ -77,6 +79,7 @@ def generate_report(scored_stocks: list[dict[str, Any]], macro: dict | None = No
                 "roe_pct": s["fundamental"].get("roe_pct"),
                 "rsi": s["indicators"].get("rsi"),
                 "above_sma200": s["indicators"].get("above_sma200"),
+                "ex_date": s["fundamental"].get("ex_date"),
                 "key_event": s["sentiment"].get("key_event"),
             }
             for s in scored_stocks
@@ -96,6 +99,11 @@ def generate_report(scored_stocks: list[dict[str, Any]], macro: dict | None = No
                 macro_parts.append(f"RGBI={macro['rgbi']:.2f}")
             if macro.get("brent") is not None:
                 macro_parts.append(f"Brent=${macro['brent']:.1f}")
+            if macro.get("market_regime"):
+                label = {"bear": "медвежий (IMOEX ниже SMA200)",
+                         "bull": "бычий (IMOEX выше SMA200)"}.get(macro["market_regime"])
+                if label:
+                    macro_parts.append(f"Режим рынка={label}")
         macro_context = ", ".join(macro_parts) if macro_parts else "данные недоступны"
 
         prompt = REPORT_PROMPT.format(
@@ -138,6 +146,26 @@ def generate_report(scored_stocks: list[dict[str, Any]], macro: dict | None = No
 # Программный fallback
 # ──────────────────────────────────────────────────────────────
 
+def _ex_date_marker(stock: dict[str, Any]) -> str:
+    """
+    «✂️ отсечка DD.MM» если ex-date в пределах EX_DATE_SOON_DAYS —
+    предупреждение о дивидендном гэпе сразу после покупки.
+    """
+    from datetime import datetime, timedelta
+
+    ex = (stock.get("fundamental") or {}).get("ex_date")
+    if not ex:
+        return ""
+    try:
+        ex_d = datetime.strptime(str(ex), "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return ""
+    today = today_msk()
+    if today <= ex_d <= today + timedelta(days=EX_DATE_SOON_DAYS):
+        return f" ✂️ отсечка {ex_d.strftime('%d.%m')}"
+    return ""
+
+
 def _fallback_report(scored_stocks: list[dict[str, Any]], macro: dict | None = None) -> str:
     """Формирует базовый отчёт без Claude."""
     today = today_msk().strftime("%d.%m.%Y")
@@ -160,6 +188,8 @@ def _fallback_report(scored_stocks: list[dict[str, Any]], macro: dict | None = N
             parts.append(f"Brent <b>${macro['brent']:.1f}</b>")
         if parts:
             lines.append("\n💹 " + " · ".join(parts) + "\n")
+        if macro.get("market_regime") == "bear":
+            lines.append("🐻 <i>Медвежий режим (IMOEX ниже SMA200) — порог BUY повышен</i>\n")
 
     if buy_stocks:
         lines.append("\n🟢 <b>ТОП ПОКУПОК</b>")
@@ -167,7 +197,7 @@ def _fallback_report(scored_stocks: list[dict[str, Any]], macro: dict | None = N
             upside = f"+{s['upside_pct']}%" if s["upside_pct"] >= 0 else f"{s['upside_pct']}%"
             conf = {"low": " ⚠️", "medium": " ◐"}.get(s.get("confidence"), "")
             lines.append(
-                f"\n<b>{escape(str(s['ticker']))} ({escape(str(s['company']))})</b> — {s['price']:,.0f} ₽{conf}\n"
+                f"\n<b>{escape(str(s['ticker']))} ({escape(str(s['company']))})</b> — {s['price']:,.0f} ₽{conf}{_ex_date_marker(s)}\n"
                 f"Score: {s['final_score']}/100 | Ориентир: {s['target_price']:,.0f} ₽ ({upside})"
             )
 
@@ -177,7 +207,7 @@ def _fallback_report(scored_stocks: list[dict[str, Any]], macro: dict | None = N
             upside = f"+{s['upside_pct']}%" if s["upside_pct"] >= 0 else f"{s['upside_pct']}%"
             conf = {"low": " ⚠️", "medium": " ◐"}.get(s.get("confidence"), "")
             lines.append(
-                f"\n<b>{escape(str(s['ticker']))} ({escape(str(s['company']))})</b> — {s['price']:,.0f} ₽{conf}\n"
+                f"\n<b>{escape(str(s['ticker']))} ({escape(str(s['company']))})</b> — {s['price']:,.0f} ₽{conf}{_ex_date_marker(s)}\n"
                 f"Score: {s['final_score']}/100 | Риск: {s['target_price']:,.0f} ₽ ({upside})"
             )
 

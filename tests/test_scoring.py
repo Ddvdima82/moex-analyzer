@@ -1,5 +1,9 @@
 """Тесты финального скоринга и сигналов (scoring/final_score.py)."""
+from datetime import timedelta
+
+from config import BEAR_BUY_EXTRA, SIGNAL_THRESHOLDS, today_msk
 from scoring.final_score import (
+    adjust_target_for_dividend,
     assess_confidence,
     build_stock_result,
     compute_final_score,
@@ -8,6 +12,62 @@ from scoring.final_score import (
     get_target_price,
     get_upside_pct,
 )
+
+
+# ── Режимный фильтр рынка ────────────────────────────────────────────────────
+
+def test_get_signal_bear_regime_raises_buy_bar():
+    buy = SIGNAL_THRESHOLDS["BUY"]
+    edge_score = buy + BEAR_BUY_EXTRA / 2          # 62.5 при 60/+5
+    assert get_signal(edge_score) == "BUY"          # обычный режим — BUY
+    assert get_signal(edge_score, regime="bear") == "HOLD"  # bear — порог выше
+    assert get_signal(buy + BEAR_BUY_EXTRA, regime="bear") == "BUY"
+
+
+def test_get_signal_bear_does_not_touch_sell():
+    sell = SIGNAL_THRESHOLDS["SELL"]
+    assert get_signal(sell, regime="bear") == "SELL"
+    assert get_signal(sell, regime="bull") == "SELL"
+
+
+def test_get_signal_bull_neutral_unchanged():
+    buy = SIGNAL_THRESHOLDS["BUY"]
+    assert get_signal(buy, regime="bull") == "BUY"
+    assert get_signal(buy, regime="neutral") == "BUY"
+    assert get_signal(buy, regime=None) == "BUY"
+
+
+def test_get_signal_bear_hysteresis_shifts_with_threshold():
+    # bear-порог 65, гистерезис 4 → прошлый BUY держится при 61+
+    buy = SIGNAL_THRESHOLDS["BUY"] + BEAR_BUY_EXTRA
+    assert get_signal(buy - 2, prev_signal="BUY", regime="bear") == "BUY"
+    assert get_signal(buy - 10, prev_signal="BUY", regime="bear") == "HOLD"
+
+
+# ── Поправка цели на дивидендный гэп ─────────────────────────────────────────
+
+def test_adjust_target_ex_date_in_horizon():
+    ex = (today_msk() + timedelta(days=5)).strftime("%Y-%m-%d")
+    assert adjust_target_for_dividend(300.0, ex, 30.0) == 270.0
+
+
+def test_adjust_target_ex_date_beyond_horizon():
+    ex = (today_msk() + timedelta(days=60)).strftime("%Y-%m-%d")
+    assert adjust_target_for_dividend(300.0, ex, 30.0) == 300.0
+
+
+def test_adjust_target_ex_date_past():
+    ex = (today_msk() - timedelta(days=3)).strftime("%Y-%m-%d")
+    assert adjust_target_for_dividend(300.0, ex, 30.0) == 300.0
+
+
+def test_adjust_target_missing_or_broken_data():
+    assert adjust_target_for_dividend(300.0, None, 30.0) == 300.0
+    assert adjust_target_for_dividend(300.0, "2026-08-01", None) == 300.0
+    assert adjust_target_for_dividend(300.0, "август", 30.0) == 300.0
+    # дивиденд больше цели → пол 0.01, не отрицательная цена
+    ex = (today_msk() + timedelta(days=2)).strftime("%Y-%m-%d")
+    assert adjust_target_for_dividend(5.0, ex, 30.0) == 0.01
 
 
 def test_assess_confidence():

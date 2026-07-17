@@ -6,8 +6,15 @@ from __future__ import annotations
 
 import math
 import statistics
+from datetime import datetime, timedelta
 
-from config import SIGNAL_HYSTERESIS, SIGNAL_THRESHOLDS, WEIGHTS
+from config import (
+    BEAR_BUY_EXTRA,
+    SIGNAL_HYSTERESIS,
+    SIGNAL_THRESHOLDS,
+    WEIGHTS,
+    today_msk,
+)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -85,7 +92,11 @@ def assess_confidence(
 # Торговые сигналы
 # ──────────────────────────────────────────────────────────────
 
-def get_signal(score: float, prev_signal: str | None = None) -> str:
+def get_signal(
+    score: float,
+    prev_signal: str | None = None,
+    regime: str | None = None,
+) -> str:
     """
     BUY / SELL / HOLD по порогам из config.SIGNAL_THRESHOLDS, с гистерезисом.
 
@@ -94,8 +105,15 @@ def get_signal(score: float, prev_signal: str | None = None) -> str:
     остаётся BUY (порог 60, полоса до 56). Без prev_signal (первый прогон,
     нет истории) — чистые пороги. Убирает хлопанье сигнала при дрожании
     скора на 1–2 пункта у порога (недетерминизм сентимента).
+
+    regime — режим рынка ("bear"/"bull"/"neutral"/None). В bear-режиме
+    (IMOEX ниже SMA200) порог BUY поднимается на BEAR_BUY_EXTRA: контрарная
+    ставка на отскок в системном обвале требует большего запаса качества.
+    Полоса гистерезиса сдвигается вместе с порогом. SELL не трогаем.
     """
     buy, sell = SIGNAL_THRESHOLDS["BUY"], SIGNAL_THRESHOLDS["SELL"]
+    if regime == "bear":
+        buy += BEAR_BUY_EXTRA
     if score >= buy:
         return "BUY"
     if score <= sell:
@@ -142,6 +160,35 @@ def get_target_price(
     return round(current_price * (1 + upside), 2)
 
 
+def adjust_target_for_dividend(
+    target: float,
+    ex_date: str | None,
+    amount: float | None,
+    horizon_days: int = 28,
+    today=None,
+) -> float:
+    """
+    Вычитает предстоящий дивиденд из целевой цены, если отсечка попадает в
+    горизонт прогноза: после ex-date цена гэпает вниз примерно на выплату,
+    и цель без поправки систематически завышена (особенно обидно для BUY,
+    выданного за день до отсечки). Вне горизонта / без данных — без изменений.
+    """
+    if not ex_date or not amount or target <= 0:
+        return target
+    try:
+        ex = datetime.strptime(str(ex_date), "%Y-%m-%d").date()
+        amount = float(amount)
+    except (ValueError, TypeError):
+        return target
+    if amount <= 0:
+        return target
+
+    today = today or today_msk()
+    if today <= ex <= today + timedelta(days=horizon_days):
+        return round(max(target - amount, 0.01), 2)
+    return target
+
+
 def get_upside_pct(current_price: float, target_price: float) -> float:
     """Потенциал роста/падения в процентах."""
     if current_price <= 0:
@@ -165,6 +212,7 @@ def build_stock_result(
     sentiment_data: dict,
     valid: dict[str, bool] | None = None,
     prev_signal: str | None = None,
+    market_regime: str | None = None,
 ) -> dict:
     """
     Собирает полный результат по одной акции в единый словарь.
@@ -173,12 +221,17 @@ def build_stock_result(
     valid — флаги «столп на реальных данных» (для перенормировки весов и
     оценки достоверности). None → все три считаются валидными.
     prev_signal — сигнал прошлого прогона (для гистерезиса, см. get_signal).
+    market_regime — режим рынка по IMOEX (bear поднимает порог BUY).
     """
     final = compute_final_score(
         fundamental_score, technical_score, sentiment_score, valid=valid
     )
-    signal = get_signal(final, prev_signal=prev_signal)
+    signal = get_signal(final, prev_signal=prev_signal, regime=market_regime)
     target = get_target_price(current_price, final, indicators.get("volatility_pct"))
+    # Отсечка внутри горизонта → цель после дивидендного гэпа
+    target = adjust_target_for_dividend(
+        target, fundamental_data.get("ex_date"), fundamental_data.get("next_div_amount")
+    )
     upside = get_upside_pct(current_price, target)
     confidence = assess_confidence(
         fundamental_score, technical_score, sentiment_score, valid=valid

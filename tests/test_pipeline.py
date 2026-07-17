@@ -34,15 +34,19 @@ def test_run_pipeline_orchestration(monkeypatch):
     monkeypatch.setattr(moex_api, "get_upcoming_dividends", lambda tickers: {})
     monkeypatch.setattr(sentiment_mod, "batch_analyze_sentiment", lambda pairs: None)
     monkeypatch.setattr(store_mod, "get_prev_signals", lambda **kw: {})
+    monkeypatch.setattr(moex_api, "get_index_history", lambda *a, **kw: __import__("pandas").DataFrame())
+    import data.dividend_calendar as div_cal_mod
+    monkeypatch.setattr(div_cal_mod, "get_upcoming_dividends_smartlab", lambda tickers: {})
 
     def fake_process(ticker, name, price, funds, medians,
-                     cbr_rate=None, upcoming_div=None, prev_signal=None):
+                     cbr_rate=None, upcoming_div=None, prev_signal=None, market_regime=None):
         result = {
             "ticker": ticker, "company": name, "price": price,
             "final_score": 90.0 if ticker == "SBER" else 40.0,
             "signal": "BUY", "target_price": price, "upside_pct": 0.0,
         }
-        meta = {"tech_fallback": False, "fund_neutral": True, "sent_fallback": False}
+        meta = {"tech_fallback": False, "fund_neutral": True,
+                "fund_stale": False, "sent_fallback": False}
         return result, meta
 
     monkeypatch.setattr(main, "_process_ticker", fake_process)
@@ -64,14 +68,18 @@ def test_run_pipeline_handles_worker_exception(monkeypatch):
     monkeypatch.setattr(moex_api, "get_upcoming_dividends", lambda tickers: {})
     monkeypatch.setattr(sentiment_mod, "batch_analyze_sentiment", lambda pairs: None)
     monkeypatch.setattr(store_mod, "get_prev_signals", lambda **kw: {})
+    monkeypatch.setattr(moex_api, "get_index_history", lambda *a, **kw: __import__("pandas").DataFrame())
+    import data.dividend_calendar as div_cal_mod
+    monkeypatch.setattr(div_cal_mod, "get_upcoming_dividends_smartlab", lambda tickers: {})
 
     def fake_process(ticker, name, price, funds, medians,
-                     cbr_rate=None, upcoming_div=None, prev_signal=None):
+                     cbr_rate=None, upcoming_div=None, prev_signal=None, market_regime=None):
         if ticker == "GAZP":
             raise RuntimeError("сбой потока")
         result = {"ticker": ticker, "company": name, "price": price,
                   "final_score": 90.0, "signal": "BUY", "target_price": price, "upside_pct": 0.0}
-        return result, {"tech_fallback": False, "fund_neutral": False, "sent_fallback": False}
+        return result, {"tech_fallback": False, "fund_neutral": False,
+                        "fund_stale": False, "sent_fallback": False}
 
     monkeypatch.setattr(main, "_process_ticker", fake_process)
     import data.macro as macro_mod
