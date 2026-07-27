@@ -143,12 +143,27 @@ def _cbr_key_rate() -> float | None:
         return None
     try:
         root = ET.fromstring(raw)
-        rates: list[float] = []
-        for el in root.iter():
-            if el.tag.endswith("}Rate") or el.tag == "Rate":
-                if el.text:
-                    rates.append(float(el.text.replace(",", ".")))
-        return rates[-1] if rates else None
+        # cbr.ru отдаёт записи КR в обратном хронологическом порядке (новые
+        # первыми) — брать последний элемент документа означало брать САМУЮ
+        # СТАРУЮ ставку в диапазоне. Сопоставляем DT↔Rate внутри каждого <KR>
+        # и берём запись с максимальной датой, а не последнюю по документу.
+        best_date: str | None = None
+        best_rate: float | None = None
+        for kr in root.iter():
+            if not (kr.tag.endswith("}KR") or kr.tag == "KR"):
+                continue
+            dt_text = rate_text = None
+            for child in kr:
+                if child.tag.endswith("}DT") or child.tag == "DT":
+                    dt_text = child.text
+                elif child.tag.endswith("}Rate") or child.tag == "Rate":
+                    rate_text = child.text
+            if not dt_text or not rate_text:
+                continue
+            if best_date is None or dt_text > best_date:
+                best_date = dt_text
+                best_rate = float(rate_text.replace(",", "."))
+        return best_rate
     except Exception as exc:
         logger.debug("cbr_key_rate parse: %s", exc)
         return None
