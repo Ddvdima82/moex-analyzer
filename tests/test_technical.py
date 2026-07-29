@@ -3,6 +3,8 @@ import pandas as pd
 
 from analysis.technical import (
     _empty_indicators,
+    adx_trend_strength,
+    compute_adx,
     compute_indicators,
     compute_macd,
     compute_market_regime,
@@ -67,6 +69,94 @@ def test_compute_indicators_real_series():
     assert ind["above_sma200"] is True       # растущий ряд выше средней
 
 
+# ── ADX/DMI ───────────────────────────────────────────────────────────────
+
+def _trend_df(direction: int, n: int = 60, step: float = 2.0, start: float = 100.0) -> pd.DataFrame:
+    """Синтетический чистый тренд: HIGH/LOW симметрично вокруг CLOSE."""
+    closes = [start + direction * step * i for i in range(n)]
+    return pd.DataFrame({
+        "HIGH": [c + 1.0 for c in closes],
+        "LOW": [c - 1.0 for c in closes],
+        "CLOSE": closes,
+    })
+
+
+def _choppy_df(n: int = 60) -> pd.DataFrame:
+    """Пилообразный ряд без устойчивого направления — слабый ADX."""
+    closes = [100.0 + (i % 2) for i in range(n)]
+    return pd.DataFrame({
+        "HIGH": [c + 0.5 for c in closes],
+        "LOW": [c - 0.5 for c in closes],
+        "CLOSE": closes,
+    })
+
+
+def test_compute_adx_strong_uptrend():
+    out = compute_adx(_trend_df(1))
+    assert out is not None
+    assert out["plus_di"] > out["minus_di"]
+    assert out["adx"] > 40
+
+
+def test_compute_adx_strong_downtrend():
+    out = compute_adx(_trend_df(-1))
+    assert out is not None
+    assert out["minus_di"] > out["plus_di"]
+    assert out["adx"] > 40
+
+
+def test_compute_adx_choppy_market_is_weak():
+    out = compute_adx(_choppy_df())
+    assert out is not None
+    assert out["adx"] < 20
+
+
+def test_compute_adx_insufficient_data():
+    assert compute_adx(_trend_df(1, n=10)) is None
+
+
+def test_compute_adx_missing_columns():
+    assert compute_adx(pd.DataFrame({"CLOSE": [100.0] * 60})) is None
+
+
+def test_adx_trend_strength_thresholds():
+    assert adx_trend_strength(None) == "unknown"
+    assert adx_trend_strength(10.0) == "weak"
+    assert adx_trend_strength(19.9) == "weak"
+    assert adx_trend_strength(20.0) == "moderate"
+    assert adx_trend_strength(39.9) == "moderate"
+    assert adx_trend_strength(40.0) == "strong"
+    assert adx_trend_strength(70.0) == "strong"
+
+
+# ── ADX-демпфер контрарной 52w-компоненты (score_technical) ──────────────────
+
+def test_score_technical_adx_dampens_strong_confirmed_downtrend():
+    base = _ind(rsi=20, position_52w=0.05)
+    damped = _ind(rsi=20, position_52w=0.05, adx=50.0, plus_di=10.0, minus_di=40.0)
+    assert score_technical(damped) < score_technical(base)
+
+
+def test_score_technical_adx_weak_trend_no_dampen():
+    """Слабый тренд (боковик) — контрарная ставка не глушится, даже если −DI>+DI."""
+    base = _ind(rsi=20, position_52w=0.05)
+    weak = _ind(rsi=20, position_52w=0.05, adx=10.0, plus_di=15.0, minus_di=20.0)
+    assert score_technical(weak) == score_technical(base)
+
+
+def test_score_technical_adx_no_dampen_when_uptrend_confirmed():
+    """+DI>−DI (бычье направление) — демпфер не применяется даже при высоком ADX."""
+    base = _ind(rsi=20, position_52w=0.05)
+    bullish = _ind(rsi=20, position_52w=0.05, adx=50.0, plus_di=40.0, minus_di=10.0)
+    assert score_technical(bullish) == score_technical(base)
+
+
+def test_score_technical_adx_missing_no_dampen():
+    base = _ind(rsi=20, position_52w=0.05)
+    no_di = _ind(rsi=20, position_52w=0.05, adx=50.0)  # plus_di/minus_di отсутствуют
+    assert score_technical(no_di) == score_technical(base)
+
+
 # ── Режим рынка по индексу ───────────────────────────────────────────────────
 
 def test_market_regime_bull():
@@ -79,6 +169,24 @@ def test_market_regime_bull():
 def test_market_regime_bear():
     df = pd.DataFrame({"CLOSE": [3000 - 5 * i for i in range(250)]})
     assert compute_market_regime(df)["regime"] == "bear"
+
+
+def test_market_regime_bear_with_strong_trend_strength():
+    df = _trend_df(-1, n=250, step=5.0, start=3000.0)
+    out = compute_market_regime(df)
+    assert out["regime"] == "bear"
+    assert out["trend_strength"] == "strong"
+    assert out["adx"] is not None and out["adx"] > 40
+
+
+def test_market_regime_no_adx_data_unknown_strength():
+    """CLOSE без HIGH/LOW (нет данных для ADX) — сила тренда unknown, но
+    режим по SMA200 всё равно считается."""
+    df = pd.DataFrame({"CLOSE": [3000 - 5 * i for i in range(250)]})
+    out = compute_market_regime(df)
+    assert out["regime"] == "bear"
+    assert out["trend_strength"] == "unknown"
+    assert out["adx"] is None
 
 
 def test_market_regime_insufficient_data_neutral():

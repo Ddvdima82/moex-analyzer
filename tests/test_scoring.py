@@ -1,7 +1,13 @@
 """Тесты финального скоринга и сигналов (scoring/final_score.py)."""
 from datetime import timedelta
 
-from config import BEAR_BUY_EXTRA, SIGNAL_THRESHOLDS, today_msk
+from config import (
+    BEAR_BUY_EXTRA,
+    BEAR_TREND_STRONG_MULT,
+    BEAR_TREND_WEAK_MULT,
+    SIGNAL_THRESHOLDS,
+    today_msk,
+)
 from scoring.final_score import (
     adjust_target_for_dividend,
     assess_confidence,
@@ -35,6 +41,30 @@ def test_get_signal_bull_neutral_unchanged():
     assert get_signal(buy, regime="bull") == "BUY"
     assert get_signal(buy, regime="neutral") == "BUY"
     assert get_signal(buy, regime=None) == "BUY"
+
+
+def test_get_signal_bear_graduated_by_trend_strength():
+    buy, extra = SIGNAL_THRESHOLDS["BUY"], BEAR_BUY_EXTRA
+    weak_bar = buy + extra * BEAR_TREND_WEAK_MULT
+    moderate_bar = buy + extra           # множитель 1.0 по умолчанию
+    strong_bar = buy + extra * BEAR_TREND_STRONG_MULT
+
+    # Слабый тренд (боковик) — надбавка меньше базовой
+    assert get_signal(weak_bar - 0.01, regime="bear", trend_strength="weak") == "HOLD"
+    assert get_signal(weak_bar, regime="bear", trend_strength="weak") == "BUY"
+
+    # Умеренный тренд — как раньше (flat BEAR_BUY_EXTRA)
+    assert get_signal(moderate_bar, regime="bear", trend_strength="moderate") == "BUY"
+
+    # Сильный подтверждённый тренд — надбавка удвоена
+    assert get_signal(strong_bar - 0.01, regime="bear", trend_strength="strong") == "HOLD"
+    assert get_signal(strong_bar, regime="bear", trend_strength="strong") == "BUY"
+
+
+def test_get_signal_bear_unknown_trend_strength_uses_default_extra():
+    buy = SIGNAL_THRESHOLDS["BUY"]
+    assert get_signal(buy + BEAR_BUY_EXTRA, regime="bear", trend_strength=None) == "BUY"
+    assert get_signal(buy + BEAR_BUY_EXTRA, regime="bear", trend_strength="unknown") == "BUY"
 
 
 def test_get_signal_bear_hysteresis_shifts_with_threshold():

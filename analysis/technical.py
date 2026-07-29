@@ -11,7 +11,11 @@ import math
 import numpy as np
 import pandas as pd
 
-from config import PRICE_GAP_THRESHOLD
+from config import (
+    ADX_MODERATE_DOWNTREND_DAMPEN,
+    ADX_STRONG_DOWNTREND_DAMPEN,
+    PRICE_GAP_THRESHOLD,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -167,17 +171,83 @@ def compute_volatility(close: pd.Series, period: int = 20) -> float:
     return round(annualized, 2)
 
 
+def compute_adx(df: pd.DataFrame, period: int = 14) -> dict[str, float] | None:
+    """
+    ADX/DMI (Wilder) — сила тренда (ADX, 0-100) отдельно от направления
+    (+DI/−DI). Классические пороги: ADX<20 — боковик/слабый тренд, 20-40 —
+    развивающийся, >40 — сильный устойчивый тренд. −DI>+DI — медвежье
+    направление. None при нехватке данных или отсутствии HIGH/LOW.
+
+    Нужен, чтобы отличить «бумага чуть просела в боковике» от «бумага в
+    подтверждённом сильном падении» — контрарный технический скор не должен
+    одинаково трактовать оба случая (см. compute_market_regime, score_technical).
+    """
+    if len(df) < period * 2 + 1 or not {"HIGH", "LOW", "CLOSE"}.issubset(df.columns):
+        return None
+
+    high = df["HIGH"].astype(float)
+    low = df["LOW"].astype(float)
+    close = df["CLOSE"].astype(float)
+    prev_close = close.shift(1)
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+
+    up_move = high - prev_high
+    down_move = prev_low - low
+    plus_dm = pd.Series(
+        np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index
+    )
+    minus_dm = pd.Series(
+        np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index
+    )
+    tr = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1)
+
+    atr = tr.ewm(alpha=1.0 / period, adjust=False).mean().replace(0, np.nan)
+    plus_di = 100 * plus_dm.ewm(alpha=1.0 / period, adjust=False).mean() / atr
+    minus_di = 100 * minus_dm.ewm(alpha=1.0 / period, adjust=False).mean() / atr
+
+    di_sum = (plus_di + minus_di).replace(0, np.nan)
+    dx = 100 * (plus_di - minus_di).abs() / di_sum
+    adx = dx.ewm(alpha=1.0 / period, adjust=False).mean()
+
+    last_adx, last_plus, last_minus = adx.iloc[-1], plus_di.iloc[-1], minus_di.iloc[-1]
+    if pd.isna(last_adx) or pd.isna(last_plus) or pd.isna(last_minus):
+        return None
+    return {
+        "adx": round(float(last_adx), 2),
+        "plus_di": round(float(last_plus), 2),
+        "minus_di": round(float(last_minus), 2),
+    }
+
+
+def adx_trend_strength(adx: float | None) -> str:
+    """Классические пороги Wilder'а: <20 weak, 20-40 moderate, >40 strong."""
+    if adx is None:
+        return "unknown"
+    if adx < 20.0:
+        return "weak"
+    if adx < 40.0:
+        return "moderate"
+    return "strong"
+
+
 def compute_market_regime(df: pd.DataFrame) -> dict[str, float | str | None]:
     """
     Режим рынка по истории индекса (IMOEX): bear — закрытие ниже SMA200,
     bull — выше/равно, neutral — данных не хватает (SMA200 не считается).
-    Потребитель — get_signal: в bear-режиме порог входа в BUY поднимается
-    (контрарная система в системном обвале не должна ловить нож).
+    Плюс сила тренда по ADX (weak/moderate/strong/unknown) — потребитель
+    (get_signal) градуирует надбавку к порогу BUY по силе тренда, а не
+    применяет фиксированную: слабый нисходящий тренд (боковик) — контрарная
+    ставка на отскок всё ещё разумна; сильный подтверждённый тренд — нет.
     """
     out: dict[str, float | str | None] = {
         "regime": "neutral",
         "index_close": None,
         "index_sma200": None,
+        "adx": None,
+        "trend_strength": "unknown",
     }
     if df is None or df.empty or "CLOSE" not in df.columns:
         return out
@@ -186,6 +256,12 @@ def compute_market_regime(df: pd.DataFrame) -> dict[str, float | str | None]:
     out["index_close"] = round(float(close.iloc[-1]), 2)
     sma200 = compute_sma(close, 200)
     out["index_sma200"] = sma200
+
+    adx_info = compute_adx(df)
+    if adx_info:
+        out["adx"] = adx_info["adx"]
+        out["trend_strength"] = adx_trend_strength(adx_info["adx"])
+
     if sma200 is None:
         return out
     out["regime"] = "bear" if float(close.iloc[-1]) < sma200 else "bull"
@@ -243,6 +319,7 @@ def compute_indicators(df: pd.DataFrame) -> dict[str, float | bool]:
     sma20 = compute_sma(close, 20)
     sma50 = compute_sma(close, 50)
     sma200 = compute_sma(close, 200)
+    adx_info = compute_adx(df)
 
     return {
         "rsi": compute_rsi(close),
@@ -258,6 +335,9 @@ def compute_indicators(df: pd.DataFrame) -> dict[str, float | bool]:
         "volatility_pct": compute_volatility(close),
         "bb_pctb": compute_bollinger_pctb(close),
         "atr_pct": compute_atr_pct(df),
+        "adx": adx_info["adx"] if adx_info else None,
+        "plus_di": adx_info["plus_di"] if adx_info else None,
+        "minus_di": adx_info["minus_di"] if adx_info else None,
         "current_price": current_price,
         "fallback": False,
     }
@@ -280,6 +360,9 @@ def _empty_indicators() -> dict[str, float | bool]:
         "volatility_pct": 0.0,
         "bb_pctb": None,
         "atr_pct": None,
+        "adx": None,
+        "plus_di": None,
+        "minus_di": None,
         "current_price": 0.0,
         "fallback": True,
     }
@@ -343,7 +426,24 @@ def score_technical(indicators: dict) -> float:
     rsi_weight = rsi / 100.0
     contrarian = 1.0 - position        # близость к лоу хороша при слабом RSI
     momentum = position * 0.5          # близость к хаю хороша при сильном RSI (сдержанно)
-    range_score = contrarian * (1.0 - rsi_weight) + momentum * rsi_weight
+
+    # ADX-демпфер КОНТРАРНОЙ компоненты: «бумага просела в боковике» (ADX слабый)
+    # и «бумага в подтверждённом сильном падении» (ADX сильный, −DI>+DI) — не
+    # одно и то же. Ставка на отскок ослабляется только во втором случае —
+    # моментумная компонента и остальные 4 пункта скора (в т.ч. backtest-
+    # подтверждённый RSI из п.1) не трогаем. Нет данных ADX → без изменений.
+    adx = indicators.get("adx")
+    plus_di = indicators.get("plus_di")
+    minus_di = indicators.get("minus_di")
+    contrarian_dampen = 1.0
+    if adx is not None and plus_di is not None and minus_di is not None and minus_di > plus_di:
+        strength = adx_trend_strength(adx)
+        if strength == "strong":
+            contrarian_dampen = ADX_STRONG_DOWNTREND_DAMPEN
+        elif strength == "moderate":
+            contrarian_dampen = ADX_MODERATE_DOWNTREND_DAMPEN
+
+    range_score = contrarian * contrarian_dampen * (1.0 - rsi_weight) + momentum * rsi_weight
     score += 15 * min(max(range_score, 0.0), 1.0)
 
     return round(score, 1)

@@ -66,6 +66,7 @@ def _process_ticker(
     upcoming_div: dict | None = None,
     prev_signal: str | None = None,
     market_regime: str | None = None,
+    market_trend_strength: str | None = None,
 ) -> tuple[dict, dict]:
     """
     Обрабатывает один тикер (технич. + фундам. + сентимент → итог).
@@ -174,6 +175,7 @@ def _process_ticker(
         valid=valid,
         prev_signal=prev_signal,
         market_regime=market_regime,
+        market_trend_strength=market_trend_strength,
     )
     logger.info(
         "%s: ИТОГ score=%.1f → %s | цель=%.2f (%.1f%%)",
@@ -214,11 +216,15 @@ def run_pipeline() -> tuple[list[dict], dict]:
     from analysis.technical import compute_market_regime
     regime_info = compute_market_regime(get_index_history())
     market_regime = regime_info["regime"]
+    market_trend_strength = regime_info["trend_strength"]
     macro["market_regime"] = market_regime
     macro["imoex_sma200"] = regime_info["index_sma200"]
+    macro["imoex_adx"] = regime_info["adx"]
+    macro["market_trend_strength"] = market_trend_strength
     logger.info(
-        "Режим рынка: %s (IMOEX=%s, SMA200=%s)",
+        "Режим рынка: %s (IMOEX=%s, SMA200=%s, ADX=%s, сила тренда=%s)",
         market_regime, regime_info["index_close"], regime_info["index_sma200"],
+        regime_info["adx"], market_trend_strength,
     )
 
     # 3. Список к обработке (только с валидной ценой)
@@ -272,6 +278,7 @@ def run_pipeline() -> tuple[list[dict], dict]:
             ex.submit(
                 _process_ticker, t, name, price, fundamentals, sector_medians,
                 cbr_rate, upcoming_divs.get(t), prev_signals.get(t), market_regime,
+                market_trend_strength,
             ): t
             for t, name, price in worklist
         }
@@ -378,24 +385,20 @@ def main() -> None:
         # Сохраняем файлы
         save_results(results, macro=macro)
 
-        # Полный отчёт — в ПЕРВЫЙ успешный прогон ISO-недели (обычно понедельник;
-        # упал понедельник из-за MOEX/сети → отчёт уйдёт со вторничным прогоном).
-        # save_results() уже записал сегодняшние строки, поэтому проверка
-        # смотрит только на даты строго раньше сегодняшней.
-        from data.store import has_run_earlier_this_week
-        if not has_run_earlier_this_week():
-            logger.info("=== ШАГ 7: Первый успешный прогон недели — генерация отчёта ===")
-            report_text = generate_report(results, macro=macro)
-            table_text = format_full_table(results)
-            if tg_ok:
-                logger.info("=== ШАГ 8: Отправка в Telegram ===")
-                send_report(report_text)
-                send_report(table_text)
-                logger.info("Отчёт успешно отправлен в Telegram")
-            else:
-                logger.info("=== ОТЧЁТ (консоль) ===\n%s\n%s", report_text, table_text)
+        # Полный отчёт — каждый успешный будний прогон (CI гоняет Пн-Пт ежедневно;
+        # раньше отчёт уходил раз в ISO-неделю, из-за чего исправления/новые
+        # сигналы между понедельниками не доходили до Telegram, только до
+        # дашборда — см. инцидент с устаревшей ставкой ЦБ 2026-07-27/29).
+        logger.info("=== ШАГ 7: Генерация отчёта ===")
+        report_text = generate_report(results, macro=macro)
+        table_text = format_full_table(results)
+        if tg_ok:
+            logger.info("=== ШАГ 8: Отправка в Telegram ===")
+            send_report(report_text)
+            send_report(table_text)
+            logger.info("Отчёт успешно отправлен в Telegram")
         else:
-            logger.info("=== ШАГ 7: Полный отчёт на этой неделе уже был — пропущен, дашборд обновлён ===")
+            logger.info("=== ОТЧЁТ (консоль) ===\n%s\n%s", report_text, table_text)
 
         logger.info("========== АНАЛИЗ ЗАВЕРШЁН УСПЕШНО ==========")
 

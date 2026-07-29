@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 
 from config import (
     BEAR_BUY_EXTRA,
+    BEAR_TREND_STRONG_MULT,
+    BEAR_TREND_WEAK_MULT,
     SIGNAL_HYSTERESIS,
     SIGNAL_THRESHOLDS,
     WEIGHTS,
@@ -96,6 +98,7 @@ def get_signal(
     score: float,
     prev_signal: str | None = None,
     regime: str | None = None,
+    trend_strength: str | None = None,
 ) -> str:
     """
     BUY / SELL / HOLD по порогам из config.SIGNAL_THRESHOLDS, с гистерезисом.
@@ -109,11 +112,16 @@ def get_signal(
     regime — режим рынка ("bear"/"bull"/"neutral"/None). В bear-режиме
     (IMOEX ниже SMA200) порог BUY поднимается на BEAR_BUY_EXTRA: контрарная
     ставка на отскок в системном обвале требует большего запаса качества.
-    Полоса гистерезиса сдвигается вместе с порогом. SELL не трогаем.
+    trend_strength ("weak"/"moderate"/"strong"/"unknown", по ADX индекса)
+    градуирует надбавку: слабый тренд/боковик (ADX<20) — контрарная ставка
+    всё ещё разумна (меньше надбавки), сильный подтверждённый тренд (ADX>40,
+    напр. −26% от SMA200) — заметно опаснее (надбавка ×2). Полоса
+    гистерезиса сдвигается вместе с порогом. SELL не трогаем.
     """
     buy, sell = SIGNAL_THRESHOLDS["BUY"], SIGNAL_THRESHOLDS["SELL"]
     if regime == "bear":
-        buy += BEAR_BUY_EXTRA
+        mult = {"weak": BEAR_TREND_WEAK_MULT, "strong": BEAR_TREND_STRONG_MULT}.get(trend_strength, 1.0)
+        buy += BEAR_BUY_EXTRA * mult
     if score >= buy:
         return "BUY"
     if score <= sell:
@@ -213,6 +221,7 @@ def build_stock_result(
     valid: dict[str, bool] | None = None,
     prev_signal: str | None = None,
     market_regime: str | None = None,
+    market_trend_strength: str | None = None,
 ) -> dict:
     """
     Собирает полный результат по одной акции в единый словарь.
@@ -222,11 +231,14 @@ def build_stock_result(
     оценки достоверности). None → все три считаются валидными.
     prev_signal — сигнал прошлого прогона (для гистерезиса, см. get_signal).
     market_regime — режим рынка по IMOEX (bear поднимает порог BUY).
+    market_trend_strength — сила тренда IMOEX по ADX (градуирует надбавку).
     """
     final = compute_final_score(
         fundamental_score, technical_score, sentiment_score, valid=valid
     )
-    signal = get_signal(final, prev_signal=prev_signal, regime=market_regime)
+    signal = get_signal(
+        final, prev_signal=prev_signal, regime=market_regime, trend_strength=market_trend_strength
+    )
     target = get_target_price(current_price, final, indicators.get("volatility_pct"))
     # Отсечка внутри горизонта → цель после дивидендного гэпа
     target = adjust_target_for_dividend(
@@ -260,6 +272,9 @@ def build_stock_result(
             "volume_trend_pct": indicators.get("volume_trend_pct"),
             "position_52w": indicators.get("position_52w"),
             "volatility_pct": indicators.get("volatility_pct"),
+            "adx": indicators.get("adx"),
+            "plus_di": indicators.get("plus_di"),
+            "minus_di": indicators.get("minus_di"),
             "fallback": bool(indicators.get("fallback", False)),
         },
         "fundamental": {

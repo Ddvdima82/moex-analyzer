@@ -39,7 +39,7 @@ def test_run_pipeline_orchestration(monkeypatch):
     monkeypatch.setattr(div_cal_mod, "get_upcoming_dividends_smartlab", lambda tickers: {})
 
     def fake_process(ticker, name, price, funds, medians,
-                     cbr_rate=None, upcoming_div=None, prev_signal=None, market_regime=None):
+                     cbr_rate=None, upcoming_div=None, prev_signal=None, market_regime=None, market_trend_strength=None):
         result = {
             "ticker": ticker, "company": name, "price": price,
             "final_score": 90.0 if ticker == "SBER" else 40.0,
@@ -73,7 +73,7 @@ def test_run_pipeline_handles_worker_exception(monkeypatch):
     monkeypatch.setattr(div_cal_mod, "get_upcoming_dividends_smartlab", lambda tickers: {})
 
     def fake_process(ticker, name, price, funds, medians,
-                     cbr_rate=None, upcoming_div=None, prev_signal=None, market_regime=None):
+                     cbr_rate=None, upcoming_div=None, prev_signal=None, market_regime=None, market_trend_strength=None):
         if ticker == "GAZP":
             raise RuntimeError("сбой потока")
         result = {"ticker": ticker, "company": name, "price": price,

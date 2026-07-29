@@ -214,8 +214,8 @@ def get_history(ticker: str, days: int = 260, from_date: str | None = None) -> p
 def get_index_history(secid: str = "IMOEX", days: int = 260) -> pd.DataFrame:
     """
     История значений индекса (борд SNDX) за последние `days` торговых дней.
-    Возвращает DataFrame с TRADEDATE (datetime) и CLOSE; пустой при ошибке.
-    Нужна для режимного фильтра рынка (IMOEX против своей SMA200).
+    Возвращает DataFrame с TRADEDATE (datetime), CLOSE, HIGH, LOW; пустой при
+    ошибке. HIGH/LOW нужны для ADX (сила тренда), CLOSE — для SMA200-режима.
     """
     calendar_days = int(days * 1.6) + 60
     from_date = (today_msk() - timedelta(days=calendar_days)).strftime("%Y-%m-%d")
@@ -257,7 +257,7 @@ def get_index_history(secid: str = "IMOEX", days: int = 260) -> pd.DataFrame:
 
     try:
         df = pd.DataFrame(rows, columns=columns)
-        df = df[[c for c in ("TRADEDATE", "CLOSE") if c in df.columns]].copy()
+        df = df[[c for c in ("TRADEDATE", "CLOSE", "HIGH", "LOW") if c in df.columns]].copy()
         df["TRADEDATE"] = pd.to_datetime(df["TRADEDATE"])
         df = (
             df.dropna(subset=["CLOSE"])

@@ -112,6 +112,16 @@ SIGNAL_HYSTERESIS: float = 4.0
 # (mean-reversion), и в системном обвале «перепродано» — не повод покупать:
 # фильтр требует от бумаги заметно больше качества, чтобы ловить нож.
 BEAR_BUY_EXTRA: float = 5.0
+# Множители BEAR_BUY_EXTRA по силе тренда IMOEX (ADX): слабый тренд/боковик —
+# контрарная ставка всё ещё разумна (меньше надбавки), сильный подтверждённый
+# тренд — заметно опаснее (больше надбавки). Moderate/unknown → множитель 1.0.
+BEAR_TREND_WEAK_MULT: float = 0.4
+BEAR_TREND_STRONG_MULT: float = 2.0
+# ADX-демпфер контрарной 52w-компоненты технического скора на уровне ОТДЕЛЬНОЙ
+# бумаги (не индекса): подтверждённый нисходящий тренд (−DI>+DI) снижает вес
+# ставки на отскок — сильнее при сильном тренде, слабее при умеренном.
+ADX_STRONG_DOWNTREND_DAMPEN: float = 0.3
+ADX_MODERATE_DOWNTREND_DAMPEN: float = 0.65
 # Маркер «скорая отсечка» в отчёте: ex-date в пределах стольких дней
 EX_DATE_SOON_DAYS: int = 7
 
@@ -206,11 +216,25 @@ def validate_config() -> list[str]:
         raise ValueError(
             f"Некорректный SIGNAL_HYSTERESIS={SIGNAL_HYSTERESIS} для порогов BUY={buy}/SELL={sell}"
         )
-    # Сдвинутый bear-порог BUY должен оставаться валидным
-    if BEAR_BUY_EXTRA < 0 or buy + BEAR_BUY_EXTRA > 100:
+    # Сдвинутый bear-порог BUY должен оставаться валидным даже в худшем случае
+    # (сильный тренд, множитель BEAR_TREND_STRONG_MULT)
+    if BEAR_BUY_EXTRA < 0 or BEAR_TREND_WEAK_MULT < 0 or BEAR_TREND_STRONG_MULT < 0:
         raise ValueError(
-            f"Некорректный BEAR_BUY_EXTRA={BEAR_BUY_EXTRA}: BUY+extra выходит за [0, 100]"
+            f"BEAR_BUY_EXTRA/множители силы тренда не могут быть отрицательными: "
+            f"extra={BEAR_BUY_EXTRA}, weak_mult={BEAR_TREND_WEAK_MULT}, strong_mult={BEAR_TREND_STRONG_MULT}"
         )
+    worst_case_extra = BEAR_BUY_EXTRA * max(BEAR_TREND_WEAK_MULT, BEAR_TREND_STRONG_MULT, 1.0)
+    if buy + worst_case_extra > 100:
+        raise ValueError(
+            f"Некорректный BEAR_BUY_EXTRA={BEAR_BUY_EXTRA} с множителями: "
+            f"BUY+extra={buy + worst_case_extra} выходит за 100"
+        )
+    for name, dampen in (
+        ("ADX_STRONG_DOWNTREND_DAMPEN", ADX_STRONG_DOWNTREND_DAMPEN),
+        ("ADX_MODERATE_DOWNTREND_DAMPEN", ADX_MODERATE_DOWNTREND_DAMPEN),
+    ):
+        if not (0.0 <= dampen <= 1.0):
+            raise ValueError(f"{name}={dampen} должен быть в [0, 1]")
 
     if TICKER_MAX_WORKERS < 1:
         raise ValueError(f"TICKER_MAX_WORKERS должен быть >= 1, получено {TICKER_MAX_WORKERS}")
