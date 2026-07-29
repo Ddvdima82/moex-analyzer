@@ -54,6 +54,9 @@ def _connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or STORE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, timeout=30)
+    # WAL-режим: параллельные читатели не блокируют единственного писателя.
+    # Критично при 6 воркерах, одновременно пишущих OHLCV-бары на Windows.
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_SCHEMA)
     return conn
 

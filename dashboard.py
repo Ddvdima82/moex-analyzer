@@ -654,7 +654,7 @@ function explain(x){
 function openDrawer(ticker){
   const x=rows.find(r=>r.ticker===ticker); if(!x)return;
   document.getElementById('dTitle').textContent=`${x.ticker} · ${fmt(x.final_score,1)}`;
-  document.getElementById('dSub').textContent=`${x.company||''} · ${fmt(x.price)} ₽ · цель ${fmt(x.target_price)} (${pct(x.upside_pct)})`;
+  document.getElementById('dSub').textContent=`${x.company||''} · ${fmt(x.price)} ₽ · ориентир ${fmt(x.target_price)} (${pct(x.upside_pct)})`;
   document.getElementById('dWhy').innerHTML=explain(x);
   document.getElementById('dPillars').innerHTML=
     [['Фундамент',x.f_score],['Технический',x.t_score],['Сентимент',x.s_score]].map(([l,v])=>
