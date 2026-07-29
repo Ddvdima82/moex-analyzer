@@ -239,12 +239,15 @@ def build_stock_result(
     signal = get_signal(
         final, prev_signal=prev_signal, regime=market_regime, trend_strength=market_trend_strength
     )
-    target = get_target_price(current_price, final, indicators.get("volatility_pct"))
-    # Отсечка внутри горизонта → цель после дивидендного гэпа
+    target_raw = get_target_price(current_price, final, indicators.get("volatility_pct"))
+    # Отображаемая цель — после дивидендного гэпа (честная будущая котировка).
+    # upside_pct считаем от target_raw (ДО вычета), а не от отображаемой цели:
+    # держатель через отсечку получает и цену после гэпа, и сам дивиденд деньгами —
+    # суммарная доходность не должна штрафоваться дважды за один и тот же дивиденд.
     target = adjust_target_for_dividend(
-        target, fundamental_data.get("ex_date"), fundamental_data.get("next_div_amount")
+        target_raw, fundamental_data.get("ex_date"), fundamental_data.get("next_div_amount")
     )
-    upside = get_upside_pct(current_price, target)
+    upside = get_upside_pct(current_price, target_raw)
     confidence = assess_confidence(
         fundamental_score, technical_score, sentiment_score, valid=valid
     )

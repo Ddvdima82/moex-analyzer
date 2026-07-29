@@ -214,3 +214,34 @@ def test_build_stock_result_shape():
         assert key in res
     assert res["signal"] in ("BUY", "HOLD", "SELL")
     assert 0.0 <= res["final_score"] <= 100.0
+
+
+# ── upside_pct не штрафуется дважды за один дивиденд ─────────────────────────
+
+def test_build_stock_result_upside_excludes_dividend_double_count():
+    """
+    Держатель через отсечку получает и цену после гэпа, и сам дивиденд
+    деньгами. target_price (отображаемый) — после вычета, но upside_pct
+    должен отражать полную доходность (как если бы дивиденд не вычитался).
+    """
+    ex_date = (today_msk() + timedelta(days=3)).strftime("%Y-%m-%d")
+
+    with_div = build_stock_result(
+        ticker="SBER", company_name="Сбербанк", current_price=300.0,
+        fundamental_score=90, technical_score=90, sentiment_score=90,
+        indicators={"rsi": 55, "volatility_pct": 30.0},
+        fundamental_data={"pe_ratio": 4.0, "sector": "banking",
+                          "ex_date": ex_date, "next_div_amount": 20.0},
+        sentiment_data={"overall_sentiment": "positive", "sentiment_score": 90},
+    )
+    without_div = build_stock_result(
+        ticker="SBER", company_name="Сбербанк", current_price=300.0,
+        fundamental_score=90, technical_score=90, sentiment_score=90,
+        indicators={"rsi": 55, "volatility_pct": 30.0},
+        fundamental_data={"pe_ratio": 4.0, "sector": "banking"},
+        sentiment_data={"overall_sentiment": "positive", "sentiment_score": 90},
+    )
+    # Отображаемая цель — ниже (дивиденд вычтен, честная будущая котировка)
+    assert with_div["target_price"] < without_div["target_price"]
+    # Но полная доходность (upside_pct) — одинаковая: дивиденд не штрафует дважды
+    assert with_div["upside_pct"] == without_div["upside_pct"]
