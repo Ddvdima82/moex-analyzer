@@ -11,6 +11,7 @@ logs/
 *.db-shm
 *.sqlite
 *.sqlite3
+data/calibration.json
 
 # Сгенерированный дашборд (CI пересобирает и публикует на Pages)
 docs/

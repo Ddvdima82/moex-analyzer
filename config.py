@@ -31,6 +31,39 @@ def _load_local_env() -> None:
 
 _load_local_env()
 
+import pathlib
+BASE_DIR: pathlib.Path = pathlib.Path(__file__).parent
+# Самокалибровка весов (calibration.py) — сгенерированный артефакт, как
+# history.db: гитигнорится, кэшируется в CI между прогонами. Читаем его тут,
+# ДО определения WEIGHTS, чтобы дефолт был единственным источником истины,
+# а калибровка — необязательным оверлеем поверх него.
+CALIBRATION_FILE: pathlib.Path = BASE_DIR / "data" / "calibration.json"
+
+
+def _load_calibrated_weights(default: dict[str, float]) -> dict[str, float]:
+    """
+    Подхватывает веса из calibration.json, если файл валиден (тот же набор
+    ключей, неотрицательные значения, сумма 1.0 с точностью до округления).
+    Любая проблема — файла нет, битый JSON, некорректные значения — тихий
+    откат на default. Самокалибровка не должна уметь сломать старт пайплайна.
+    """
+    import json as _json
+    try:
+        if CALIBRATION_FILE.exists():
+            data = _json.loads(CALIBRATION_FILE.read_text(encoding="utf-8"))
+            w = data.get("weights")
+            if (
+                isinstance(w, dict)
+                and set(w) == set(default)
+                and all(isinstance(v, (int, float)) and v >= 0 for v in w.values())
+                and abs(sum(w.values()) - 1.0) < 1e-6
+            ):
+                return {k: float(v) for k, v in w.items()}
+    except Exception:
+        pass
+    return default
+
+
 # Московское время (UTC+3, без перехода на летнее время с 2014).
 # CI GitHub Actions работает в UTC — без этого дата отчёта «съезжает» у полуночи.
 MSK = timezone(timedelta(hours=3))
@@ -90,11 +123,16 @@ COMPANY_NAMES: dict[str, str] = {
 # ──────────────────────────────────────────────────────────────
 # Веса трёх столпов анализа (сумма должна быть 1.0)
 # ──────────────────────────────────────────────────────────────
-WEIGHTS: dict[str, float] = {
+# Дефолт — единственный источник истины при отсутствии/невалидности калибровки.
+# calibration.py периодически переписывает data/calibration.json на основе
+# накопленной статистики прогонов (см. compute_and_save_calibration); при
+# наличии валидного файла WEIGHTS ниже — уже откалиброванные значения.
+_DEFAULT_WEIGHTS: dict[str, float] = {
     "fundamental": 0.35,
     "technical":   0.35,
     "sentiment":   0.30,
 }
+WEIGHTS: dict[str, float] = _load_calibrated_weights(_DEFAULT_WEIGHTS)
 
 # ──────────────────────────────────────────────────────────────
 # Пороги для торговых сигналов
@@ -161,10 +199,8 @@ CLAUDE_MAX_RETRIES: int = 3
 TICKER_MAX_WORKERS: int = 6
 
 # ──────────────────────────────────────────────────────────────
-# Пути к папкам
+# Пути к папкам (BASE_DIR определён раньше — нужен для CALIBRATION_FILE)
 # ──────────────────────────────────────────────────────────────
-import pathlib
-BASE_DIR: pathlib.Path = pathlib.Path(__file__).parent
 REPORTS_DIR: pathlib.Path = BASE_DIR / "reports"
 LOGS_DIR: pathlib.Path = BASE_DIR / "logs"
 FUNDAMENTALS_FILE: pathlib.Path = BASE_DIR / "data" / "fundamentals.json"

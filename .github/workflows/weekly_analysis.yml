@@ -35,12 +35,15 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # История прогонов (SQLite) переживает запуски → копятся тренды и бэктест.
+      # История прогонов (SQLite) и самокалиброванные веса переживают запуски →
+      # копятся тренды/бэктест, а калибровка видит полную накопленную статистику.
       # restore-keys подхватывает последний кэш, key с run_id пишет новый.
       - name: Restore run history
         uses: actions/cache@v4
         with:
-          path: data/history.db
+          path: |
+            data/history.db
+            data/calibration.json
           key: moex-history-${{ github.run_id }}
           restore-keys: |
             moex-history-
@@ -64,7 +67,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: history-db-backup
-          path: data/history.db
+          path: |
+            data/history.db
+            data/calibration.json
           retention-days: 90
 
       - name: Send delta report (signal changes vs previous run)

@@ -147,16 +147,18 @@ def _close_on_or_after(df: pd.DataFrame, day: pd.Timestamp) -> float | None:
     return float(sub.iloc[0]["CLOSE"])
 
 
-def evaluate_stored_runs(
+def _load_resolved_runs(
     horizon_days: int = 28,
     db_path=None,
     history_provider: Callable[[str], pd.DataFrame] | None = None,
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     """
-    Оценивает все прогоны из SQLite против форвардной доходности.
-    Для каждой строки (дата, тикер, сигнал) берёт цену на дату прогона и через
-    horizon_days календарных дней из истории MOEX и считает попадание.
+    Прогоны из SQLite с реализованной форвардной доходностью и per-pillar
+    скорами (для evaluate_stored_runs и calibration.py — общая точка чтения,
+    чтобы не дублировать сопоставление дат/цен из истории MOEX).
+    Возвращает [{"ticker", "run_date", "signal", "scores": {...}, "fwd_return"}].
     """
+    import json
     from data.store import _connect
 
     if history_provider is None:
@@ -167,14 +169,14 @@ def evaluate_stored_runs(
         conn = _connect(db_path)
         conn.row_factory = __import__("sqlite3").Row
         rows = [dict(r) for r in conn.execute(
-            "SELECT run_date, ticker, signal FROM runs ORDER BY run_date"
+            "SELECT run_date, ticker, signal, scores_json FROM runs ORDER BY run_date"
         ).fetchall()]
         conn.close()
     except Exception as exc:
         logger.error("Не удалось прочитать прогоны: %s", exc)
-        return {"n": 0, "by_signal": {}, "hit_rate": 0.0, "mean_return": 0.0}
+        return []
 
-    records: list[tuple[str, float]] = []
+    out: list[dict[str, Any]] = []
     hist_cache: dict[str, pd.DataFrame] = {}
 
     for r in rows:
@@ -191,8 +193,35 @@ def evaluate_stored_runs(
         p_out = _close_on_or_after(df, exit_day)
         if not p_in or not p_out:
             continue
-        records.append((r["signal"], (p_out / p_in - 1.0) * 100.0))
 
+        try:
+            scores = json.loads(r["scores_json"]) if r.get("scores_json") else {}
+        except (ValueError, TypeError):
+            scores = {}
+
+        out.append({
+            "ticker": ticker,
+            "run_date": r["run_date"],
+            "signal": r["signal"],
+            "scores": scores,
+            "fwd_return": (p_out / p_in - 1.0) * 100.0,
+        })
+
+    return out
+
+
+def evaluate_stored_runs(
+    horizon_days: int = 28,
+    db_path=None,
+    history_provider: Callable[[str], pd.DataFrame] | None = None,
+) -> dict[str, Any]:
+    """
+    Оценивает все прогоны из SQLite против форвардной доходности.
+    Для каждой строки (дата, тикер, сигнал) берёт цену на дату прогона и через
+    horizon_days календарных дней из истории MOEX и считает попадание.
+    """
+    resolved = _load_resolved_runs(horizon_days, db_path, history_provider)
+    records = [(r["signal"], r["fwd_return"]) for r in resolved]
     summary = _summarize(records)
     summary["horizon_days"] = horizon_days
     summary["runs_evaluated"] = len(records)
