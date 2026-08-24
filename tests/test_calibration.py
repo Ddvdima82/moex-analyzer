@@ -9,9 +9,17 @@ import calibration
 from config import today_msk
 
 
-def _resolved(pillars: dict[str, float], fwd_return: float) -> dict:
-    return {"ticker": "SBER", "run_date": "2026-01-01", "signal": "BUY",
+def _resolved(pillars: dict[str, float], fwd_return: float, run_date: str = "2026-01-01") -> dict:
+    return {"ticker": "SBER", "run_date": run_date, "signal": "BUY",
             "scores": pillars, "fwd_return": fwd_return}
+
+
+def _spread_dates(i: int, per_day: int = 5) -> str:
+    """i-я строка → одна из 20 различных дат (по умолчанию 5 строк/день,
+    имитируя тикеры одного прогона) — нужно, чтобы MIN_OBSERVATION_DATES не
+    резал тесты, написанные до его появления."""
+    day = (i // per_day) % 20 + 1
+    return f"2026-01-{day:02d}"
 
 
 # ── _target_weights: расчёт целевых весов по корреляции ──────────────────────
@@ -32,13 +40,33 @@ def test_target_weights_favors_predictive_pillar():
         rows.append(_resolved(
             {"fundamental": random.uniform(0, 100), "technical": tech,
              "sentiment": random.uniform(0, 100)},
-            fwd,
+            fwd, run_date=_spread_dates(i),
         ))
     target = calibration._target_weights(rows)
     assert target is not None
     assert target["technical"] > target["fundamental"]
     assert target["technical"] > target["sentiment"]
     assert abs(sum(target.values()) - 1.0) < 1e-6
+
+
+def test_target_weights_none_below_min_observation_dates():
+    """100 строк — прошли бы старый MIN_OBSERVATIONS-only гейт — но всего 3
+    независимых торговых дня (тикеры одного дня коррелированы общим режимом
+    рынка, это не 100 независимых сэмплов). Идеальная корреляция как в тесте
+    favors_predictive_pillar, но без разброса по датам — должно всё равно
+    вернуть None."""
+    import random
+    random.seed(42)
+    rows = []
+    for i in range(100):
+        tech = 30 + i * 0.6
+        fwd = (tech - 50) * 0.5
+        rows.append(_resolved(
+            {"fundamental": random.uniform(0, 100), "technical": tech,
+             "sentiment": random.uniform(0, 100)},
+            fwd, run_date=f"2026-01-{(i % 3) + 1:02d}",  # только 3 даты
+        ))
+    assert calibration._target_weights(rows) is None
 
 
 def test_target_weights_respects_floor():
@@ -52,7 +80,7 @@ def test_target_weights_respects_floor():
         rows.append(_resolved(
             {"fundamental": random.uniform(0, 100), "technical": tech,
              "sentiment": random.uniform(0, 100)},
-            fwd,
+            fwd, run_date=_spread_dates(i),
         ))
     target = calibration._target_weights(rows)
     assert all(v >= calibration.WEIGHT_FLOOR - 1e-9 for v in target.values())
@@ -67,8 +95,9 @@ def test_target_weights_none_when_no_pillar_predictive():
             {"fundamental": random.uniform(0, 100), "technical": random.uniform(0, 100),
              "sentiment": random.uniform(0, 100)},
             random.uniform(-1, 1) * 0.001,  # доходность не зависит от скоров
+            run_date=_spread_dates(i),
         )
-        for _ in range(100)
+        for i in range(100)
     ]
     # Не гарантируем None детерминированно на случайных данных, но проверяем
     # инвариант: если результат есть — он валиден (сумма=1, floor соблюдён)
@@ -116,7 +145,7 @@ def test_compute_and_save_writes_file_with_enough_data(tmp_path, monkeypatch):
         rows.append(_resolved(
             {"fundamental": random.uniform(0, 100), "technical": tech,
              "sentiment": random.uniform(0, 100)},
-            fwd,
+            fwd, run_date=_spread_dates(i),
         ))
     monkeypatch.setattr("backtest._load_resolved_runs", lambda **kw: rows)
 
@@ -177,7 +206,7 @@ def test_compute_and_save_old_calibration_recalibrates(tmp_path, monkeypatch):
         rows.append(_resolved(
             {"fundamental": random.uniform(0, 100), "technical": tech,
              "sentiment": random.uniform(0, 100)},
-            fwd,
+            fwd, run_date=_spread_dates(i),
         ))
     monkeypatch.setattr("backtest._load_resolved_runs", lambda **kw: rows)
 

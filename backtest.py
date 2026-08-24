@@ -210,6 +210,39 @@ def _load_resolved_runs(
     return out
 
 
+RELIABLE_MIN_INDEPENDENT_DATES = 15
+
+
+def _cluster_adjusted_stats(resolved: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Строки резолвленных прогонов группированы по дате: N тикеров одного дня
+    делят общий рыночный режим этого дня, это не N независимых наблюдений
+    (псевдо-репликация) — see calibration.MIN_OBSERVATION_DATES для того же
+    диагноза на стороне калибровки весов. n_independent_dates — реальный
+    размер выборки; mean_return_by_date/t_stat считаются по СРЕДНИМ ПО ДНЯМ
+    (не по сырым строкам), это грубый, но честный cluster-robust расчёт.
+    reliable=False ниже RELIABLE_MIN_INDEPENDENT_DATES — не прячем метрику,
+    просто явно помечаем, что доверять ей рано.
+    """
+    by_date: dict[str, list[float]] = {}
+    for r in resolved:
+        by_date.setdefault(r["run_date"], []).append(r["fwd_return"])
+
+    n_independent = len(by_date)
+    per_date_means = pd.Series([sum(v) / len(v) for v in by_date.values()])
+    mean = float(per_date_means.mean()) if n_independent else 0.0
+    se = float(per_date_means.std(ddof=1) / (n_independent ** 0.5)) if n_independent > 1 else float("nan")
+    t_stat = mean / se if se == se and se > 0 else float("nan")
+
+    return {
+        "n_independent_dates": n_independent,
+        "mean_return_by_date": round(mean, 3),
+        "se_by_date": round(se, 3) if se == se else None,
+        "t_stat_by_date": round(t_stat, 2) if t_stat == t_stat else None,
+        "reliable": n_independent >= RELIABLE_MIN_INDEPENDENT_DATES,
+    }
+
+
 def evaluate_stored_runs(
     horizon_days: int = 28,
     db_path=None,
@@ -219,13 +252,111 @@ def evaluate_stored_runs(
     Оценивает все прогоны из SQLite против форвардной доходности.
     Для каждой строки (дата, тикер, сигнал) берёт цену на дату прогона и через
     horizon_days календарных дней из истории MOEX и считает попадание.
+    Помимо наивных per-row метрик добавляет cluster-adjusted (по датам) —
+    см. _cluster_adjusted_stats: с малым числом торговых дней per-row hit-rate
+    выглядит уверенно на 100+ строк, будучи по факту 3-5 независимыми днями.
     """
     resolved = _load_resolved_runs(horizon_days, db_path, history_provider)
     records = [(r["signal"], r["fwd_return"]) for r in resolved]
     summary = _summarize(records)
     summary["horizon_days"] = horizon_days
     summary["runs_evaluated"] = len(records)
+    summary.update(_cluster_adjusted_stats(resolved))
     return summary
+
+
+# ──────────────────────────────────────────────────────────────
+# Режим 3: honest walk-forward проверка самокалибровки весов (OOS)
+# ──────────────────────────────────────────────────────────────
+
+def walk_forward_weight_validation(
+    horizon_days: int = 28,
+    embargo_days: int | None = None,
+    min_train_dates: int = 10,
+    min_test_dates: int = 5,
+    db_path=None,
+    history_provider: Callable[[str], pd.DataFrame] | None = None,
+) -> dict[str, Any]:
+    """
+    Отвечает на вопрос, который calibration.py сам себе не задаёт: помогли ли
+    бы откалиброванные веса ЗАДНИМ ЧИСЛОМ, если фитить их только на прошлом и
+    проверять на будущем — а не на всей накопленной истории разом (что и
+    calibration._target_weights, и наивный evaluate_stored_runs делают
+    in-sample). Режет накопленные прогоны на train/test ПО ДАТАМ (не строкам —
+    см. _cluster_adjusted_stats), с embargo между ними: без него хвост
+    train-периода и голова test-периода имеют перекрывающиеся forward-return
+    окна (оба смотрят в одни и те же будущие цены) — классическая утечка,
+    Блюпринт Этап 18/21.
+
+    Фитит веса корреляцией на train (та же формула, что calibration.
+    _target_weights, продублирована — импортировать calibration.py сюда нельзя,
+    он сам импортирует _load_resolved_runs ОТСЮДА, взаимный импорт зациклится),
+    сравнивает гипотетический сигнал калиброванных весов против ЗАФИКСИРОВАННЫХ
+    дефолтных (config._DEFAULT_WEIGHTS — не текущего calibration.json, чтобы
+    сравнение не зависело от того, что уже когда-то насчитано) на одном и том
+    же test-сете.
+
+    {"insufficient": True, ...} вместо результата — предпочитаем явно сказать
+    "данных мало", чем выдать OOS-число на 2 независимых днях.
+    """
+    from config import SIGNAL_THRESHOLDS, _DEFAULT_WEIGHTS
+
+    embargo_days = horizon_days if embargo_days is None else embargo_days
+    pillars = tuple(_DEFAULT_WEIGHTS)
+
+    resolved = _load_resolved_runs(horizon_days, db_path, history_provider)
+    rows = [r for r in resolved if r.get("scores") and all(p in r["scores"] for p in pillars)]
+
+    dates = sorted({r["run_date"] for r in rows})
+    if len(dates) < min_train_dates + min_test_dates:
+        return {
+            "insufficient": True,
+            "reason": "too few distinct trading days with resolved forward returns",
+            "n_dates": len(dates), "needed": min_train_dates + min_test_dates,
+        }
+
+    split_idx = len(dates) - min_test_dates
+    train_dates = set(dates[:split_idx])
+    train_last = pd.Timestamp(dates[split_idx - 1])
+    test_dates = {d for d in dates[split_idx:] if pd.Timestamp(d) >= train_last + pd.Timedelta(days=embargo_days)}
+
+    if len(train_dates) < min_train_dates or len(test_dates) < min_test_dates:
+        return {
+            "insufficient": True,
+            "reason": "too few independent days left after embargo purge",
+            "n_train_dates": len(train_dates), "n_test_dates": len(test_dates),
+            "needed_train": min_train_dates, "needed_test": min_test_dates, "embargo_days": embargo_days,
+        }
+
+    train_rows = [r for r in rows if r["run_date"] in train_dates]
+    test_rows = [r for r in rows if r["run_date"] in test_dates]
+
+    df_train = pd.DataFrame([{**r["scores"], "fwd_return": r["fwd_return"]} for r in train_rows])
+    corr = {p: df_train[p].corr(df_train["fwd_return"]) for p in pillars}
+    if any(pd.isna(v) for v in corr.values()):
+        return {"insufficient": True, "reason": "degenerate train correlation (NaN)"}
+    clamped = {p: max(0.0, v) for p, v in corr.items()}
+    total = sum(clamped.values())
+    fitted_weights = {p: clamped[p] / total for p in pillars} if total > 0 else dict(_DEFAULT_WEIGHTS)
+
+    def _hypothetical_signal(scores: dict[str, float], weights: dict[str, float]) -> str:
+        score = sum(scores[p] * weights[p] for p in weights)
+        if score >= SIGNAL_THRESHOLDS["BUY"]:
+            return "BUY"
+        if score <= SIGNAL_THRESHOLDS["SELL"]:
+            return "SELL"
+        return "HOLD"
+
+    fitted_records = [(_hypothetical_signal(r["scores"], fitted_weights), r["fwd_return"]) for r in test_rows]
+    default_records = [(_hypothetical_signal(r["scores"], _DEFAULT_WEIGHTS), r["fwd_return"]) for r in test_rows]
+
+    return {
+        "insufficient": False,
+        "n_train_dates": len(train_dates), "n_test_dates": len(test_dates), "embargo_days": embargo_days,
+        "fitted_weights": {k: round(v, 3) for k, v in fitted_weights.items()},
+        "test_fitted": _summarize(fitted_records),
+        "test_default": _summarize(default_records),
+    }
 
 
 # ──────────────────────────────────────────────────────────────
@@ -238,7 +369,25 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=28, help="Горизонт в днях/барах")
     parser.add_argument("--ticker", type=str, help="Walk-forward технического столпа по тикеру")
     parser.add_argument("--warmup", type=int, default=200)
+    parser.add_argument("--walk-forward-weights", action="store_true",
+                         help="OOS-проверка калибровки весов (train/test по датам, с embargo)")
     args = parser.parse_args()
+
+    if args.walk_forward_weights:
+        res = walk_forward_weight_validation(horizon_days=args.horizon)
+        if res.get("insufficient"):
+            print(f"\nWalk-forward проверка калибровки: недостаточно данных ({res['reason']}).")
+            print(f"  {res}")
+            return
+        print(f"\nWalk-forward проверка калибровки весов "
+              f"(train={res['n_train_dates']} дн., test={res['n_test_dates']} дн., "
+              f"embargo={res['embargo_days']} дн.):")
+        print(f"  Веса, обученные на train: {res['fitted_weights']}")
+        for label, key in (("калиброванные", "test_fitted"), ("дефолтные", "test_default")):
+            s = res[key]
+            print(f"  {label:<13}: n={s['n']:>4} hit-rate={s['hit_rate']:>5}% "
+                  f"ср.доходность={s['mean_return']:>6}%")
+        return
 
     if args.ticker:
         from data.history_cache import get_history_cached
@@ -260,12 +409,18 @@ def main() -> None:
                   "Накопите несколько еженедельных прогонов и повторите.")
             return
         print(f"\nОценка прогонов из БД (горизонт {args.horizon} дн., "
-              f"{res['runs_evaluated']} наблюдений):")
+              f"{res['runs_evaluated']} наблюдений, {res['n_independent_dates']} независимых дней):")
         print(f"  Общий hit-rate: {res['hit_rate']}% | ср.доходность: {res['mean_return']}%")
         for sig in ("BUY", "SELL", "HOLD"):
             s = res["by_signal"][sig]
             print(f"  {sig:<5}: n={s['n']:>4} "
                   f"hit={s.get('hit_rate', '—')!s:>6} ср.дох={s['mean_return']:>6}%")
+        print(f"  По дням: ср.доходность={res['mean_return_by_date']}% "
+              f"se={res['se_by_date']} t-stat={res['t_stat_by_date']}")
+        if not res["reliable"]:
+            print(f"  [!] Только {res['n_independent_dates']} независимых торговых дней "
+                  f"(нужно >= {RELIABLE_MIN_INDEPENDENT_DATES}) — статистике выше доверять рано, "
+                  f"это шум малой выборки, а не подтверждённый эдж.")
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read   # gh run download в шаге восстановления истории из бэкапа
 
 # Не запускать параллельные деплои Pages
 concurrency:
@@ -47,6 +48,39 @@ jobs:
           key: moex-history-${{ github.run_id }}
           restore-keys: |
             moex-history-
+
+      # Найдено 2026-08-24: Actions Cache вытесняет запись, не тронутую 7 дней.
+      # Пока прогоны шли нерегулярно (тестовый период), паузы >7 дней между
+      # ними несколько раз тихо стирали всю накопленную историю — restore-keys
+      # просто не находил НИЧЕГО и молча стартовал с пустой БД, без единой
+      # ошибки в логе. С 2026-08-01 (регулярный будничный cron, паузы только
+      # на выходные — 2-3 дня) это не повторялось, но остаётся риском при любой
+      # более длинной паузе (отпуск, простой Actions и т.п.). Артефакт-бэкап
+      # ниже (retention 90 дней, не подвержен 7-дневному TTL) уже существовал
+      # как страховка, но не был подключён как реальный путь восстановления —
+      # чиним именно это: если кэш промахнулся (истории нет), тянем последний
+      # успешный бэкап явно, а не оставляем БД пустой молча.
+      - name: Recover history from backup artifact on cache miss
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f data/history.db ]; then
+            echo "Кэш восстановлен — история на месте, бэкап не нужен."
+          else
+            echo "Кэш пуст (промах/вытеснение) — ищу последний бэкап-артефакт."
+            LATEST_RUN=$(gh run list --repo "${{ github.repository }}" \
+              --workflow=weekly_analysis.yml --status=success --limit=1 \
+              --json databaseId --jq '.[0].databaseId')
+            if [ -n "$LATEST_RUN" ]; then
+              mkdir -p data
+              gh run download "$LATEST_RUN" --repo "${{ github.repository }}" \
+                -n history-db-backup -D data/ \
+                || echo "Бэкап для прогона $LATEST_RUN не найден — стартуем с пустой БД."
+            else
+              echo "Успешных прошлых прогонов не найдено — стартуем с пустой БД (первый запуск)."
+            fi
+          fi
 
       - name: Run analysis
         env:

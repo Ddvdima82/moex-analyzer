@@ -38,6 +38,14 @@ from config import today_msk
 logger = logging.getLogger(__name__)
 
 MIN_OBSERVATIONS = 60
+# Отдельный порог по числу РАЗЛИЧНЫХ торговых дней, а не строк. 20 тикеров одного
+# прогона делят общий рыночный режим этого дня — это не 20 независимых
+# наблюдений корреляции столп↔доходность, а по сути одно, размноженное 20 раз
+# (псевдо-репликация). MIN_OBSERVATIONS=60 сам по себе прошёл бы уже на 3 днях
+# (3×20), и калибровка перекроила бы боевые веса по шуму трёх дней рынка.
+# Найдено при переносе research-протокола (walk-forward/PBO-дисциплина) из
+# intraday-блюпринта на этот EOD-пайплайн — см. историю разговора 2026-08-23.
+MIN_OBSERVATION_DATES = 15
 MIN_RECALIBRATION_INTERVAL_DAYS = 7
 LEARNING_RATE = 0.2
 WEIGHT_FLOOR = 0.10
@@ -50,14 +58,23 @@ def _target_weights(resolved: list[dict[str, Any]]) -> dict[str, float] | None:
     Отрицательная/нулевая корреляция клампится в 0 — недоказанный сигнал не
     получает бонус, но и не наказывается сверх этого. WEIGHT_FLOOR не даёт
     столпу свалиться в 0 от шума малой выборки. None — калибровка невозможна
-    (мало наблюдений или ни один столп не показал предсказательной силы).
+    (мало наблюдений/дней или ни один столп не показал предсказательной силы).
     """
     rows = [
-        {**r["scores"], "fwd_return": r["fwd_return"]}
+        {**r["scores"], "fwd_return": r["fwd_return"], "run_date": r["run_date"]}
         for r in resolved
         if r.get("scores") and all(p in r["scores"] for p in PILLARS)
     ]
     if len(rows) < MIN_OBSERVATIONS:
+        return None
+
+    n_dates = len({row["run_date"] for row in rows})
+    if n_dates < MIN_OBSERVATION_DATES:
+        logger.info(
+            "Калибровка весов: %d строк, но лишь %d независимых торговых дней "
+            "(нужно %d) — пропуск, чтобы не подгонять веса под шум пары дней",
+            len(rows), n_dates, MIN_OBSERVATION_DATES,
+        )
         return None
 
     df = pd.DataFrame(rows)
