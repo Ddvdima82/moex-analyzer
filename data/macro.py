@@ -111,8 +111,12 @@ def _moex_currency(secid: str) -> float | None:
 # ЦБ РФ — ключевая ставка (SOAP)
 # ──────────────────────────────────────────────────────────────
 
-def _cbr_key_rate() -> float | None:
-    """Ключевая ставка ЦБ РФ через публичный SOAP-сервис cbr.ru."""
+def _fetch_cbr_key_rate() -> float | None:
+    """
+    Ключевая ставка ЦБ РФ через публичный SOAP-сервис cbr.ru (сырая выборка,
+    без кэша). None при недоступности/непарсибельности — фолбэк живёт
+    в _cbr_key_rate(), чтобы эту функцию можно было тестировать изолированно.
+    """
     today = date.today()
     from_dt = (today - timedelta(days=45)).strftime("%Y-%m-%dT00:00:00")
     to_dt = today.strftime("%Y-%m-%dT00:00:00")
@@ -167,6 +171,38 @@ def _cbr_key_rate() -> float | None:
     except Exception as exc:
         logger.debug("cbr_key_rate parse: %s", exc)
         return None
+
+
+def _cbr_key_rate(db_path=None) -> float | None:
+    """
+    Ключевая ставка ЦБ с фолбэком на последнее известное значение.
+
+    cbr.ru недоступен → без фолбэка cbr_rate=None, и фундаментальный столп
+    ТИХО теряет обе поправки на ставку (планка дивдоходности и сжатие P/E) —
+    скоры меняются, а причина не видна в отчёте. Ставка пересматривается на
+    заседаниях (~раз в 6-7 недель), поэтому вчерашнее значение куда ближе к
+    истине, чем его отсутствие. Кэш живёт в history.db (переживает прогоны
+    через CI-кэш); значения старше CBR_RATE_MAX_AGE_DAYS не используются.
+    """
+    from config import CBR_RATE_MAX_AGE_DAYS
+    from data.store import load_macro_value, save_macro_value
+
+    rate = _fetch_cbr_key_rate()
+    if rate is not None:
+        save_macro_value("cbr_rate", rate, db_path=db_path)
+        return rate
+
+    cached = load_macro_value("cbr_rate", max_age_days=CBR_RATE_MAX_AGE_DAYS, db_path=db_path)
+    if cached is None:
+        logger.warning("Ставка ЦБ недоступна, и в кэше нет свежего значения")
+        return None
+
+    value, age_days = cached
+    logger.warning(
+        "Ставка ЦБ недоступна — берём закэшированную %.2f%% (возраст %d дн.)",
+        value, age_days,
+    )
+    return value
 
 
 # ──────────────────────────────────────────────────────────────

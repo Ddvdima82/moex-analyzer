@@ -36,6 +36,11 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_ticker ON runs (ticker);
 CREATE INDEX IF NOT EXISTS idx_runs_date   ON runs (run_date);
+CREATE TABLE IF NOT EXISTS macro_cache (
+    key        TEXT PRIMARY KEY,
+    value      REAL NOT NULL,
+    updated_at TEXT NOT NULL          -- дата успешной выборки (YYYY-MM-DD)
+);
 """
 
 
@@ -148,6 +153,58 @@ def get_last_two_run_dates(db_path: Path | None = None) -> list[str]:
     except Exception as exc:
         logger.error("Ошибка чтения дат прогонов: %s", exc)
         return []
+
+
+def save_macro_value(key: str, value: float, db_path: Path | None = None) -> bool:
+    """
+    Кладёт последнее УСПЕШНО полученное макро-значение в кэш (переживает
+    прогоны: history.db кэшируется в CI). Нужен, чтобы недоступность внешнего
+    источника не приводила к тихой потере показателя — см. load_macro_value.
+    """
+    try:
+        conn = _connect(db_path)
+        with conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO macro_cache (key, value, updated_at) VALUES (?, ?, ?)",
+                (key, float(value), today_msk().strftime("%Y-%m-%d")),
+            )
+        conn.close()
+        return True
+    except Exception as exc:
+        logger.error("Ошибка записи macro_cache[%s]: %s", key, exc)
+        return False
+
+
+def load_macro_value(
+    key: str,
+    max_age_days: int | None = None,
+    db_path: Path | None = None,
+) -> tuple[float, int] | None:
+    """
+    Последнее закэшированное значение и его возраст в днях: (value, age_days).
+    None — записи нет, она старше max_age_days, или БД недоступна.
+    """
+    from datetime import date as _date
+
+    try:
+        conn = _connect(db_path)
+        row = conn.execute(
+            "SELECT value, updated_at FROM macro_cache WHERE key = ?", (key,)
+        ).fetchone()
+        conn.close()
+    except Exception as exc:
+        logger.error("Ошибка чтения macro_cache[%s]: %s", key, exc)
+        return None
+
+    if not row:
+        return None
+    try:
+        age_days = (today_msk() - _date.fromisoformat(str(row[1]))).days
+    except (ValueError, TypeError):
+        return None
+    if max_age_days is not None and age_days > max_age_days:
+        return None
+    return float(row[0]), age_days
 
 
 def load_run(run_date: str, db_path: Path | None = None) -> list[dict[str, Any]]:
