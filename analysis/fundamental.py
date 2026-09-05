@@ -104,11 +104,52 @@ def load_fundamentals() -> dict[str, dict[str, Any]]:
         logger.error("fundamentals.json: ожидался объект, получено %s", type(raw).__name__)
         return {}
 
-    valid = {t: d for t, d in raw.items() if _validate_entry(t, d)}
-    dropped = len(raw) - len(valid)
+    merged = _merge_auto_fundamentals(raw)
+
+    valid = {t: d for t, d in merged.items() if _validate_entry(t, d)}
+    dropped = len(merged) - len(valid)
     if dropped:
-        logger.warning("fundamentals.json: отброшено %d невалидных записей из %d", dropped, len(raw))
+        logger.warning("fundamentals.json: отброшено %d невалидных записей из %d", dropped, len(merged))
     return valid
+
+
+def _merge_auto_fundamentals(manual: dict[str, Any]) -> dict[str, Any]:
+    """
+    Накладывает автоматически собранные показатели поверх ручных ПОЛЕВО.
+
+    Ручной файл остаётся базой и единственным источником полей, которых нет у
+    парсера (сектор, рост выручки). Авто-слой перекрывает только те поля,
+    которые реально удалось получить, и подтягивает `last_updated`, чтобы
+    свежие данные не считались устаревшими механизмом is_fund_stale.
+    Недоступен/пуст авто-слой — работаем ровно как раньше, на ручных данных.
+    """
+    try:
+        from data.fundamentals_parser import load_auto_fundamentals
+        auto = load_auto_fundamentals()
+    except Exception as exc:
+        logger.warning("Авто-фундаментал недоступен (%s) — только ручные данные", exc)
+        return manual
+    if not auto:
+        return manual
+
+    merged: dict[str, Any] = {}
+    updated_tickers = 0
+    for ticker, entry in manual.items():
+        if not isinstance(entry, dict):
+            merged[ticker] = entry
+            continue
+        fresh = auto.get(ticker)
+        if not isinstance(fresh, dict) or not fresh:
+            merged[ticker] = entry
+            continue
+        combined = {**entry, **{k: v for k, v in fresh.items() if v is not None}}
+        if fresh.get("last_updated"):
+            combined["last_updated"] = fresh["last_updated"]
+        merged[ticker] = combined
+        updated_tickers += 1
+
+    logger.info("Фундаментал: авто-данные наложены на %d тикеров", updated_tickers)
+    return merged
 
 
 def get_sector_medians(fundamentals: dict[str, dict[str, Any]]) -> dict[str, dict[str, float]]:

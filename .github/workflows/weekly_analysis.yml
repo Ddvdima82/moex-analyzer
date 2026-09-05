@@ -45,6 +45,7 @@ jobs:
           path: |
             data/history.db
             data/calibration.json
+            data/fundamentals_auto.json
           key: moex-history-${{ github.run_id }}
           restore-keys: |
             moex-history-
@@ -104,6 +105,7 @@ jobs:
           path: |
             data/history.db
             data/calibration.json
+            data/fundamentals_auto.json
           retention-days: 90
 
       - name: Send delta report (signal changes vs previous run)

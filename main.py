@@ -197,6 +197,15 @@ def run_pipeline() -> tuple[list[dict], dict]:
 
     # 1. Фундаментальные данные из JSON
     logger.info("=== ШАГ 1: Загрузка фундаментальных данных ===")
+    # Автообновление мультипликаторов со smart-lab (троттлинг внутри, раз в
+    # FUNDAMENTALS_AUTO_MAX_AGE_DAYS дней). Ошибка не блокирует прогон —
+    # load_fundamentals тогда отработает на одних ручных данных.
+    try:
+        from data.fundamentals_parser import update_fundamentals_auto
+        update_fundamentals_auto(TOP20_TICKERS)
+    except Exception as exc:
+        logger.error("Ошибка автообновления фундаментала: %s", exc)
+
     fundamentals = load_fundamentals()
     sector_medians = get_sector_medians(fundamentals)
     logger.info("Загружено %d компаний, %d секторов", len(fundamentals), len(sector_medians))

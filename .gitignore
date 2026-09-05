@@ -12,6 +12,7 @@ logs/
 *.sqlite
 *.sqlite3
 data/calibration.json
+data/fundamentals_auto.json
 
 # Сгенерированный дашборд (CI пересобирает и публикует на Pages)
 docs/
