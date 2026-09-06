@@ -22,6 +22,16 @@ def db(tmp_path):
     return tmp_path / "cache.db"
 
 
+@pytest.fixture(autouse=True)
+def _no_candles(monkeypatch):
+    """
+    Свечной хвост по умолчанию пуст: тесты обязаны быть network-free, а
+    get_candles иначе ушёл бы в реальный ISS. Тесты про выходные сессии
+    переопределяют этот мок явно.
+    """
+    monkeypatch.setattr(moex_api, "get_candles", lambda *a, **kw: pd.DataFrame())
+
+
 def test_first_call_full_fetch_and_store(db, monkeypatch):
     calls = []
 
@@ -142,3 +152,85 @@ def test_separate_tickers_isolated(db, monkeypatch):
     gazp = hc.get_history_cached("GAZP", db_path=db)
     assert sber["OPEN"].iloc[0] == 100.0
     assert gazp["OPEN"].iloc[0] == 200.0
+
+
+# ── Хвост из свечей: торги выходного дня ─────────────────────────────────────
+
+def _bars(dates, close=100.0):
+    import pandas as pd
+    return pd.DataFrame({
+        "TRADEDATE": pd.to_datetime(dates),
+        "OPEN": [close] * len(dates), "HIGH": [close + 1] * len(dates),
+        "LOW": [close - 1] * len(dates), "CLOSE": [close] * len(dates),
+        "VOLUME": [1000] * len(dates),
+    })
+
+
+def test_weekend_candles_extend_history(tmp_path, monkeypatch):
+    """
+    /history не отдаёт сессии выходного дня, /candles отдаёт — иначе прогон
+    в субботу-воскресенье считал бы индикаторы по пятничным барам.
+    """
+    import data.moex_api as api
+    import pandas as pd
+
+    monkeypatch.setattr(api, "get_history", lambda *a, **kw: _bars(["2026-09-03", "2026-09-04"]))
+    monkeypatch.setattr(
+        api, "get_candles",
+        lambda t, from_date, **kw: _bars(["2026-09-04", "2026-09-05", "2026-09-06"]),
+    )
+
+    df = hc.get_history_cached("SBER", days=260, db_path=tmp_path / "h.db")
+    dates = [str(d.date()) for d in df["TRADEDATE"]]
+    assert dates[-3:] == ["2026-09-04", "2026-09-05", "2026-09-06"]
+
+
+def test_candles_do_not_duplicate_existing_bars(tmp_path, monkeypatch):
+    """Свечи за уже известные даты не создают дублей — апсерт по (тикер, дата)."""
+    import data.moex_api as api
+
+    monkeypatch.setattr(api, "get_history", lambda *a, **kw: _bars(["2026-09-03", "2026-09-04"]))
+    monkeypatch.setattr(api, "get_candles", lambda t, from_date, **kw: _bars(["2026-09-03", "2026-09-04"]))
+
+    df = hc.get_history_cached("SBER", days=260, db_path=tmp_path / "h.db")
+    assert len(df) == len(set(str(d.date()) for d in df["TRADEDATE"]))
+
+
+def test_candles_failure_does_not_break_history(tmp_path, monkeypatch):
+    """Падение свечей оставляет обычную историю рабочей."""
+    import data.moex_api as api
+
+    def _boom(*a, **kw):
+        raise OSError("candles недоступны")
+
+    monkeypatch.setattr(api, "get_history", lambda *a, **kw: _bars(["2026-09-03", "2026-09-04"]))
+    monkeypatch.setattr(api, "get_candles", _boom)
+
+    df = hc.get_history_cached("SBER", days=260, db_path=tmp_path / "h.db")
+    assert len(df) == 2
+
+
+def test_official_bar_overwrites_candle_bar(tmp_path, monkeypatch):
+    """
+    Когда MOEX публикует официальный бар за дату, ранее закрытую свечой,
+    он должен перезаписать свечное значение, а не остаться рядом.
+    """
+    import data.moex_api as api
+
+    db = tmp_path / "h.db"
+    # Первый прогон: официальной истории нет, дату закрывает свеча
+    monkeypatch.setattr(api, "get_history", lambda *a, **kw: _bars(["2026-09-04"], close=280.0))
+    monkeypatch.setattr(api, "get_candles", lambda t, from_date, **kw: _bars(["2026-09-05"], close=281.0))
+    hc.get_history_cached("SBER", days=260, db_path=db)
+
+    # Второй прогон: MOEX опубликовал официальный бар за ту же дату
+    monkeypatch.setattr(
+        api, "get_history",
+        lambda *a, **kw: _bars(["2026-09-04", "2026-09-05"], close=999.0),
+    )
+    monkeypatch.setattr(api, "get_candles", lambda t, from_date, **kw: __import__("pandas").DataFrame())
+    df = hc.get_history_cached("SBER", days=260, db_path=db)
+
+    row = df[df["TRADEDATE"] == __import__("pandas").Timestamp("2026-09-05")]
+    assert len(row) == 1
+    assert float(row["CLOSE"].iloc[0]) == 999.0

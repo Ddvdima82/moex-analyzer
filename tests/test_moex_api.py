@@ -1,4 +1,5 @@
 """Тесты разбора ответов MOEX ISS (data/moex_api.py) без сети."""
+import pandas as pd
 from datetime import timedelta
 
 from config import today_msk
@@ -98,3 +99,56 @@ def test_calc_div_yield_excludes_payout_older_than_a_year(monkeypatch):
         moex_api, "_get", lambda url, params=None: _dividends_response(rows)
     )
     assert moex_api.calc_div_yield("SBER", 100.0) == 10.0
+
+
+# ── Свечи: источник баров выходного дня ──────────────────────────────────────
+
+def _candles_payload(rows):
+    return {"candles": {
+        "columns": ["open", "close", "high", "low", "value", "volume", "begin", "end"],
+        "data": rows,
+    }}
+
+
+def test_get_candles_normalizes_to_history_format(monkeypatch):
+    """Формат совпадает с get_history: TRADEDATE (дата бара) + OHLCV."""
+    import data.moex_api as api
+
+    monkeypatch.setattr(api, "_get", lambda *a, **kw: _candles_payload([
+        [280.9, 278.48, 281.01, 278.06, 6.1e8, 2189750, "2026-09-06 00:00:00", "2026-09-06 12:11:31"],
+    ]))
+    df = api.get_candles("SBER", from_date="2026-09-05")
+
+    assert list(df.columns) == ["TRADEDATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]
+    # begin приходит с временем — нужна ровно дата, иначе ключ не сойдётся с /history
+    assert df["TRADEDATE"].iloc[0] == pd.Timestamp("2026-09-06")
+    assert df["CLOSE"].iloc[0] == 278.48
+    assert df["HIGH"].iloc[0] == 281.01
+
+
+def test_get_candles_sorted_and_without_empty_closes(monkeypatch):
+    import data.moex_api as api
+
+    monkeypatch.setattr(api, "_get", lambda *a, **kw: _candles_payload([
+        [1, 3.0, 1, 1, 1, 1, "2026-09-06 00:00:00", "2026-09-06 23:59:59"],
+        [1, None, 1, 1, 1, 1, "2026-09-05 00:00:00", "2026-09-05 23:59:59"],
+        [1, 2.0, 1, 1, 1, 1, "2026-09-04 00:00:00", "2026-09-04 23:59:59"],
+    ]))
+    df = api.get_candles("SBER", from_date="2026-09-04")
+
+    assert len(df) == 2                                     # бар без close отброшен
+    assert list(df["TRADEDATE"]) == sorted(df["TRADEDATE"])  # по возрастанию даты
+
+
+def test_get_candles_network_failure_returns_empty(monkeypatch):
+    import data.moex_api as api
+
+    monkeypatch.setattr(api, "_get", lambda *a, **kw: None)
+    assert api.get_candles("SBER", from_date="2026-09-05").empty
+
+
+def test_get_candles_empty_payload(monkeypatch):
+    import data.moex_api as api
+
+    monkeypatch.setattr(api, "_get", lambda *a, **kw: _candles_payload([]))
+    assert api.get_candles("SBER", from_date="2026-09-05").empty

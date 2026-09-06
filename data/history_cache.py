@@ -104,7 +104,7 @@ def get_history_cached(
     (TRADEDATE datetime, OPEN..VOLUME, последние `days` строк, пустой DF при
     полном отсутствии данных).
     """
-    from data.moex_api import get_history
+    from data.moex_api import get_candles, get_history
 
     conn: sqlite3.Connection | None = None
     cached = pd.DataFrame(columns=_COLUMNS)
@@ -136,6 +136,32 @@ def get_history_cached(
         else:
             last = cached["TRADEDATE"].max().strftime("%Y-%m-%d")
             fresh = get_history(ticker, from_date=last)
+
+        # 1b. Хвост из свечей: MOEX торгует по выходным, но /history эти сессии
+        # не отдаёт (см. get_candles) — без этого прогон в субботу-воскресенье
+        # считал бы индикаторы по пятничным барам. Свечи совпадают с /history
+        # на общих датах, а апсерт по (ticker, tradedate) даёт официальному
+        # бару перезаписать свечной, когда MOEX его наконец опубликует.
+        tail_from = None
+        if fresh is not None and not fresh.empty:
+            tail_from = fresh["TRADEDATE"].max()
+        elif not cached.empty:
+            tail_from = cached["TRADEDATE"].max()
+        if tail_from is not None:
+            try:
+                candles = get_candles(ticker, from_date=tail_from.strftime("%Y-%m-%d"))
+                if candles is not None and not candles.empty:
+                    extra = candles[candles["TRADEDATE"] > tail_from]
+                    if not extra.empty:
+                        logger.info(
+                            "Хвост из свечей %s: +%d бар(ов) после %s (торги выходного дня)",
+                            ticker, len(extra), tail_from.date(),
+                        )
+                        fresh = extra if fresh is None or fresh.empty else pd.concat(
+                            [fresh, extra], ignore_index=True
+                        )
+            except Exception as exc:
+                logger.warning("Свечи %s недоступны (%s) — работаем без хвоста", ticker, exc)
 
         if fresh is not None and not fresh.empty:
             if conn is not None:

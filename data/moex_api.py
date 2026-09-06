@@ -211,6 +211,70 @@ def get_history(ticker: str, days: int = 260, from_date: str | None = None) -> p
         return pd.DataFrame()
 
 
+def get_candles(ticker: str, from_date: str, interval: int = 24) -> pd.DataFrame:
+    """
+    Дневные свечи из /candles — тот же формат, что get_history
+    (TRADEDATE, OPEN, HIGH, LOW, CLOSE, VOLUME). Пустой DataFrame при ошибке.
+
+    Зачем отдельно от /history: MOEX торгует по выходным, но в /history эти
+    сессии не попадают (запрос за 05-06.09.2026 вернул ноль строк по всем
+    бордам), тогда как /candles их отдаёт. Без этого источника прогон в
+    субботу-воскресенье считал бы индикаторы по пятничным данным, выдавая
+    сигнал к уже изменившейся цене. На общих датах значения совпадают с
+    /history (проверено на SBER: 279.05 и 280.68 за 03-04.09), поэтому
+    свечи безопасно дополняют официальную историю, а не подменяют её.
+    """
+    url = (
+        f"{MOEX_BASE_URL}/engines/stock/markets/shares"
+        f"/securities/{ticker}/candles.json"
+    )
+
+    columns: list[str] = []
+    rows: list[list] = []
+    page_size = 500          # лимит страницы candles (крупнее, чем у history)
+    max_pages = 10
+    start = 0
+
+    for _ in range(max_pages):
+        data = _get(url, {
+            "from": from_date,
+            "interval": interval,
+            "start": start,
+            "iss.meta": "off",
+        })
+        if not data:
+            break
+        candles = data.get("candles", {})
+        if not columns:
+            columns = candles.get("columns", [])
+        page_rows: list[list] = candles.get("data", [])
+        if not page_rows:
+            break
+        rows.extend(page_rows)
+        if len(page_rows) < page_size:
+            break
+        start += len(page_rows)
+
+    if not rows:
+        return pd.DataFrame()
+
+    try:
+        df = pd.DataFrame(rows, columns=columns)
+        df = df.rename(columns={
+            "begin": "TRADEDATE", "open": "OPEN", "high": "HIGH",
+            "low": "LOW", "close": "CLOSE", "volume": "VOLUME",
+        })
+        keep = [c for c in ("TRADEDATE", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME") if c in df.columns]
+        df = df[keep].copy()
+        # begin приходит как "YYYY-MM-DD HH:MM:SS" — приводим к дате бара,
+        # чтобы ключ совпадал с TRADEDATE из /history и апсерт в кэш сходился
+        df["TRADEDATE"] = pd.to_datetime(df["TRADEDATE"]).dt.normalize()
+        return df.dropna(subset=["CLOSE"]).sort_values("TRADEDATE").reset_index(drop=True)
+    except Exception as exc:
+        logger.error("Ошибка разбора свечей %s: %s", ticker, exc, exc_info=True)
+        return pd.DataFrame()
+
+
 def get_index_history(secid: str = "IMOEX", days: int = 260) -> pd.DataFrame:
     """
     История значений индекса (борд SNDX) за последние `days` торговых дней.
