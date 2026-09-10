@@ -87,7 +87,12 @@ jobs:
 
       - name: Run analysis
         env:
-          SENTIMENT_PROVIDER: gemini
+          # Провайдер берётся из переменной репозитория, чтобы отключать/включать
+          # сентимент без коммита: `gh variable set SENTIMENT_PROVIDER --body none`.
+          # none помечает столп фолбэком → он исключается из скора, веса
+          # перенормируются. Не задана → gemini. Введено 2026-09-10, когда ключ
+          # Gemini отозвали и столп четыре дня тихо сыпал 401 на зелёных прогонах.
+          SENTIMENT_PROVIDER: ${{ vars.SENTIMENT_PROVIDER || 'gemini' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
