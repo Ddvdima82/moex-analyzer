@@ -73,3 +73,42 @@ def test_render_escapes_script_injection(tmp_path):
     # сырой закрывающий тег из данных экранирован
     assert "</script><script>alert(1)" not in html
     assert "<\\/script>" in html
+
+
+# ── Chart.js встроен в страницу, а не тянется с CDN ──────────────────────────
+
+def test_chartjs_inlined_from_vendor():
+    """
+    Единственной внешней зависимостью дашборда был jsdelivr: если он не отдавал
+    файл, первый `new Chart` обрывал отрисовку всех секций ниже.
+    """
+    tag = dashboard._chartjs_tag()
+    assert tag.startswith("<script>") and tag.endswith("</script>")
+    assert "cdn.jsdelivr" not in tag
+    assert "Chart" in tag
+
+
+def test_rendered_page_has_no_external_scripts():
+    html = dashboard.render_html({"x": 1})
+    assert "<script src=" not in html
+    assert "<!--__CHARTJS__-->" not in html
+
+
+def test_chartjs_falls_back_to_cdn_when_vendor_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(dashboard, "_VENDOR_CHARTJS", tmp_path / "нет.js")
+    assert dashboard._chartjs_tag() == dashboard._CHARTJS_CDN_TAG
+
+
+def test_chartjs_with_script_close_tag_not_inlined(tmp_path, monkeypatch):
+    """`</script>` внутри библиотеки закрыл бы встроенный тег раньше времени."""
+    bad = tmp_path / "chart.js"
+    bad.write_text("var Chart=1;/* </script> */", encoding="utf-8")
+    monkeypatch.setattr(dashboard, "_VENDOR_CHARTJS", bad)
+    assert dashboard._chartjs_tag() == dashboard._CHARTJS_CDN_TAG
+
+
+def test_every_chart_construction_is_guarded():
+    """Без Chart.js ни один график не должен бросать ReferenceError наверх."""
+    tpl = dashboard._TEMPLATE
+    assert tpl.count("new Chart(") >= 2
+    assert tpl.count("typeof Chart==='undefined'") == tpl.count("new Chart(")

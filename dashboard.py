@@ -169,10 +169,43 @@ def gather_dashboard_data(
 # Рендер
 # ──────────────────────────────────────────────────────────────
 
+_VENDOR_CHARTJS = Path(__file__).parent / "vendor" / "chart.umd.min.js"
+_CHARTJS_CDN_TAG = (
+    '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>'
+)
+
+
+def _chartjs_tag() -> str:
+    """
+    Chart.js встраивается прямо в страницу из vendor/, а не грузится с CDN.
+
+    Раньше единственной внешней зависимостью дашборда был jsdelivr: если он не
+    отдавал файл (блокировка у провайдера или мобильного оператора, блокировщик
+    рекламы, сбой сети), первый же `new Chart` бросал ReferenceError на верхнем
+    уровне скрипта и обрывал отрисовку всех секций ниже — таймлайна, секторов,
+    бэктеста, дивидендного календаря. Встроенная копия делает страницу реально
+    самодостаточной. CDN остаётся запасным путём, если файла в vendor/ нет.
+    """
+    try:
+        lib = _VENDOR_CHARTJS.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Встроенный Chart.js недоступен (%s) — подключаю с CDN", exc)
+        return _CHARTJS_CDN_TAG
+    # Вхождение `</script` внутри библиотеки закрыло бы тег раньше времени
+    if "</script" in lib.lower():
+        logger.warning("vendor/chart.umd.min.js содержит </script — подключаю с CDN")
+        return _CHARTJS_CDN_TAG
+    return f"<script>{lib}</script>"
+
+
 def render_html(data: dict[str, Any]) -> str:
-    """Встраивает данные в самодостаточный HTML-шаблон."""
+    """Встраивает данные и Chart.js в самодостаточный HTML-шаблон."""
     payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    return _TEMPLATE.replace("/*__DATA__*/", payload)
+    return (
+        _TEMPLATE
+        .replace("<!--__CHARTJS__-->", _chartjs_tag())
+        .replace("/*__DATA__*/", payload)
+    )
 
 
 def build_dashboard(
@@ -215,7 +248,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MOEX Анализатор — дашборд</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<!--__CHARTJS__-->
 <style>
   :root{
     --bg:#0e141b; --panel:#161f2b; --panel2:#1d2836; --line:#2a3849;
@@ -530,6 +563,9 @@ draw();
 // Timeline (stacked bars)
 (function(){
   const t=DATA.timeline;
+  // Без Chart.js выходим тихо: исключение здесь, на верхнем уровне, оборвало бы
+  // отрисовку всех секций ниже (секторы, бэктест, календарь).
+  if(typeof Chart==='undefined'){return;}
   new Chart(document.getElementById('timeline'),{type:'bar',
     data:{labels:t.map(x=>x.date),datasets:[
       {label:'BUY',data:t.map(x=>x.BUY),backgroundColor:SIGCLR.BUY,stack:'s'},
@@ -680,6 +716,7 @@ function openDrawer(ticker){
   // График истории скора
   const h=(DATA.history[ticker]||[]);
   if(dChart)dChart.destroy();
+  if(typeof Chart==='undefined'){dChart=null;return;}
   dChart=new Chart(document.getElementById('dChart'),{type:'line',
     data:{labels:h.map(p=>p.date),datasets:[{label:'Score',data:h.map(p=>p.score),
       borderColor:'#2dd4bf',backgroundColor:'rgba(45,212,191,.12)',fill:true,tension:.25,
