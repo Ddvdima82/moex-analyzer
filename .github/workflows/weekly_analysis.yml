@@ -1,9 +1,6 @@
 name: MOEX Analysis and Friday Telegram Report
 
 on:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/weekly_analysis.yml']
   schedule:
     # Ежедневно в 07:00 UTC = 10:00 МСК. Выходные тоже: MOEX проводит торги
     # выходного дня, цены по ним меняются, и /candles отдаёт эти бары — без
@@ -93,7 +90,7 @@ jobs:
       - name: Run analysis
         env:
           # Только пятничный вечерний cron включает отправку. Ручной запуск — без рассылки.
-          TELEGRAM_ENABLED: ${{ (github.event_name == 'schedule' && github.event.schedule == '0 17 * * 5') || (github.event_name == 'push' && github.event.head_commit.message == 'Send authorized trial MOEX Telegram report') && 'true' || 'false' }}
+          TELEGRAM_ENABLED: ${{ github.event_name == 'schedule' && github.event.schedule == '0 17 * * 5' && 'true' || 'false' }}
           # Провайдер берётся из переменной репозитория, чтобы отключать/включать
           # сентимент без коммита: `gh variable set SENTIMENT_PROVIDER --body none`.
           # none помечает столп фолбэком → он исключается из скора, веса
