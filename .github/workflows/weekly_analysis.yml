@@ -1,4 +1,4 @@
-name: Daily MOEX Stock Analysis
+name: MOEX Analysis and Friday Telegram Report
 
 on:
   schedule:
@@ -6,6 +6,8 @@ on:
     # выходного дня, цены по ним меняются, и /candles отдаёт эти бары — без
     # субботне-воскресных прогонов понедельник открывался бы на данных пятницы.
     - cron: '0 7 * * *'
+    # Пятница, 17:00 UTC = 20:00 МСК: недельная рассылка после основной сессии.
+    - cron: '0 17 * * 5'
   workflow_dispatch:   # Ручной запуск для тестирования
 
 # Нужно для публикации дашборда на GitHub Pages
@@ -18,7 +20,7 @@ permissions:
 # Не запускать параллельные деплои Pages
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   analyze:
@@ -87,6 +89,8 @@ jobs:
 
       - name: Run analysis
         env:
+          # Только пятничный вечерний cron включает отправку. Ручной запуск — без рассылки.
+          TELEGRAM_ENABLED: ${{ github.event_name == 'schedule' && github.event.schedule == '0 17 * * 5' && 'true' || 'false' }}
           # Провайдер берётся из переменной репозитория, чтобы отключать/включать
           # сентимент без коммита: `gh variable set SENTIMENT_PROVIDER --body none`.
           # none помечает столп фолбэком → он исключается из скора, веса
@@ -101,7 +105,6 @@ jobs:
 
       # Страховка кэша: Actions Cache вытесняется (лимит 10GB, TTL 7 дней) —
       # артефакт с retention 90 дней позволяет восстановить историю вручную.
-      # Стоит ДО delta_check: падение отправки дельты не должно отменять бэкап.
       - name: Backup run history (artifact)
         if: success()
         uses: actions/upload-artifact@v4
@@ -113,12 +116,7 @@ jobs:
             data/fundamentals_auto.json
           retention-days: 90
 
-      - name: Send delta report (signal changes vs previous run)
-        if: success()
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python delta_check.py
+      # Отдельная delta-рассылка отключена: один полный выпуск в неделю.
 
       - name: Upload logs on failure
         if: failure()
