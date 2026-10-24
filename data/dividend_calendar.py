@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from typing import Any
 
 import requests
@@ -124,6 +125,103 @@ def _parse_smartlab_html(html: str, tickers: list[str]) -> dict[str, dict[str, A
 
         result[ticker] = {"ex_date": cutoff_date, "amount": amount}
 
+    return result
+
+
+# ──────────────────────────────────────────────────────────────
+# История выплат по одной бумаге (замена мёртвого ISS /dividends)
+# ──────────────────────────────────────────────────────────────
+#
+# ISS /securities/{ticker}/dividends.json к 2026-10 отдаёт карточку бумаги
+# (секции description/boards) вместо секции dividends — get_dividends молча
+# получал [], и trailing-дивдоходность была 0.0 у 19 из 20 бумаг с конца июля.
+# Страница smart-lab /q/{ticker}/dividend/ содержит таблицу «Выплаченные
+# дивиденды» (Тикер | дата T-1 | дата отсечки | Период | дивиденд | ...).
+# В ней бывают строки префов (SBERP на странице SBER) — фильтруем по тикеру.
+
+SMARTLAB_TICKER_DIV_URL = "https://smart-lab.ru/q/{ticker}/dividend/"
+
+# Кэш на процесс: get_dividends зовётся дважды на тикер (trailing-доходность и
+# предстоящие отсечки) — второй поход на smart-lab ничего нового не даст.
+# None тоже кэшируется: упавший источник не дёргаем повторно в том же прогоне.
+_HISTORY_CACHE: dict[str, list[dict[str, Any]] | None] = {}
+_HISTORY_LOCK = threading.Lock()
+
+
+def _parse_dividend_history_html(html: str, ticker: str) -> list[dict[str, Any]] | None:
+    """
+    Выплаты из таблицы smart-lab: [{"registryclosedate": "YYYY-MM-DD", "value": 37.64}, ...],
+    новые первыми. [] — таблица есть, но выплат по тикеру нет (бумага без
+    дивидендов). None — таблица с ожидаемыми колонками не найдена (сменилась вёрстка).
+
+    Таблиц с такими колонками бывает две: при объявленной выплате первой идёт
+    «Ожидаемые дивиденды», за ней «Выплаченные» — собираем строки из всех
+    (у LKOH иначе терялась вся история, оставалась одна будущая выплата).
+    """
+    found_table = False
+    payouts: list[dict[str, Any]] = []
+    for table_html in re.findall(r"<table[^>]*>(.*?)</table>", html, flags=re.S):
+        rows = re.findall(r"<tr[^>]*>(.*?)</tr>", table_html, flags=re.S)
+        col_map: dict[str, int] | None = None
+        for row_html in rows:
+            if col_map is None:
+                ths = [_cell_text(c).lower() for c in re.findall(r"<th[^>]*>(.*?)</th>", row_html, flags=re.S)]
+                if {"тикер", "дата отсечки", "дивиденд"}.issubset(ths):
+                    col_map = {
+                        "ticker": ths.index("тикер"),
+                        "cutoff_date": ths.index("дата отсечки"),
+                        "amount": ths.index("дивиденд"),
+                    }
+                continue
+            cells = [_cell_text(c) for c in re.findall(r"<td[^>]*>(.*?)</td>", row_html, flags=re.S)]
+            if len(cells) <= max(col_map.values()) or cells[col_map["ticker"]] != ticker:
+                continue
+            m = _DATE_RE.search(cells[col_map["cutoff_date"]])
+            if not m:
+                continue
+            d, mo, y = m.groups()
+            amount_raw = (
+                cells[col_map["amount"]]
+                .replace("₽", "").replace(" ", "").replace("\xa0", "").replace(",", ".")
+            )
+            try:
+                amount = float(amount_raw)
+            except ValueError:
+                continue
+            if amount > 0:
+                payout = {"registryclosedate": f"{y}-{mo}-{d}", "value": amount}
+                if payout not in payouts:
+                    payouts.append(payout)
+        found_table = found_table or col_map is not None
+    if not found_table:
+        return None
+    payouts.sort(key=lambda x: x["registryclosedate"], reverse=True)
+    return payouts
+
+
+def get_dividend_history_smartlab(ticker: str) -> list[dict[str, Any]] | None:
+    """
+    История выплат тикера со smart-lab (формат как у ISS get_dividends).
+    None — источник недоступен или вёрстка не распознана (с warning в лог);
+    [] — выплат нет. Никогда не бросает.
+    """
+    with _HISTORY_LOCK:
+        if ticker in _HISTORY_CACHE:
+            return _HISTORY_CACHE[ticker]
+    result: list[dict[str, Any]] | None
+    try:
+        resp = requests.get(
+            SMARTLAB_TICKER_DIV_URL.format(ticker=ticker), headers=_HEADERS, timeout=REQUEST_TIMEOUT
+        )
+        resp.raise_for_status()
+        result = _parse_dividend_history_html(resp.text, ticker)
+        if result is None:
+            logger.warning("Smart-lab дивиденды %s: таблица выплат не найдена (сменилась вёрстка?)", ticker)
+    except Exception as exc:
+        logger.warning("Smart-lab дивиденды %s недоступны: %s", ticker, exc)
+        result = None
+    with _HISTORY_LOCK:
+        _HISTORY_CACHE[ticker] = result
     return result
 
 

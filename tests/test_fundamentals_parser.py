@@ -125,12 +125,25 @@ def test_roe_not_derived_when_equity_negative():
     assert "roe_pct" not in _extract_row(cols, rows[0])
 
 
-def test_roe_not_derived_when_loss_making():
-    """Убыток (P/E<0) — тождество тоже неприменимо."""
+def test_roe_negative_when_loss_making_with_positive_equity():
+    """Убыток при положительном капитале (P/E<0, P/BV>0) — честное отрицательное ROE."""
     cols, rows = _parse_tables(_page(
-        _NONFIN_HEAD, _nonfin_row("MGNT", "170", "3 000", "-27", "-5.0", "1.2", "2.9")
+        _NONFIN_HEAD, _nonfin_row("SNGS", "931", "3 000", "-251", "-3.7", "0.1", "")
     ))[0]
-    assert "roe_pct" not in _extract_row(cols, rows[0])
+    assert _extract_row(cols, rows[0])["roe_pct"] == -2.7      # 0.1 / −3.7
+
+
+def test_negative_pe_kept_as_loss_signal():
+    """
+    Отрицательный P/E — убыток, а не мусор. Раньше он отбрасывался проверкой
+    правдоподобия, и в скор шёл старый положительный P/E из ручного файла.
+    """
+    cols, rows = _parse_tables(_page(
+        _NONFIN_HEAD, _nonfin_row("MGNT", "177", "3 509", "-30.9", "-5.7", "-44.8", "2.9")
+    ))[0]
+    out = _extract_row(cols, rows[0])
+    assert out["pe_ratio"] == -5.7
+    assert "roe_pct" not in out                   # капитал отрицательный
 
 
 def test_missing_cells_yield_partial_result():

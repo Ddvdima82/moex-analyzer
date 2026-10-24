@@ -340,33 +340,54 @@ def get_index_history(secid: str = "IMOEX", days: int = 260) -> pd.DataFrame:
 # Дивиденды
 # ──────────────────────────────────────────────────────────────
 
+# Тикеры, по которым в этом прогоне не ответил НИ ОДИН источник дивидендов.
+# Их нулевая доходность — не «бумага без дивидендов», а дыра в данных; main
+# выносит число таких тикеров в сводку прогона (см. dividends_unavailable).
+_DIV_UNAVAILABLE: set[str] = set()
+
+
+def _get_dividends_iss(ticker: str) -> list[dict[str, Any]] | None:
+    """Выплаты из ISS; None — запрос упал или в ответе нет секции dividends."""
+    data = _get(f"{MOEX_BASE_URL}/securities/{ticker}/dividends.json")
+    if not data or "dividends" not in data:
+        return None
+    try:
+        divs = data["dividends"]
+        columns: list[str] = divs.get("columns", [])
+        return [dict(zip(columns, row)) for row in divs.get("data", [])]
+    except Exception as exc:
+        logger.error("Ошибка разбора дивидендов %s: %s", ticker, exc, exc_info=True)
+        return None
+
+
 def get_dividends(ticker: str) -> list[dict[str, Any]]:
     """
     Возвращает список последних 5 дивидендных выплат:
     [{"value": 33.45, "registryclosedate": "2024-07-18", ...}, ...]
+
+    Источник — ISS, фолбэк — smart-lab: к 2026-10 ISS на этом эндпоинте отдаёт
+    карточку бумаги без секции dividends, и без фолбэка доходность тихо
+    обнулялась у всех бумаг. Оба источника молчат → тикер попадает в
+    _DIV_UNAVAILABLE, результат [].
     """
-    url = f"{MOEX_BASE_URL}/securities/{ticker}/dividends.json"
-    data = _get(url)
-
-    if not data:
-        return []
-
-    try:
-        divs = data.get("dividends", {})
-        columns: list[str] = divs.get("columns", [])
-        rows: list[list] = divs.get("data", [])
-
-        if not rows:
+    result = _get_dividends_iss(ticker)
+    if not result:
+        from data.dividend_calendar import get_dividend_history_smartlab
+        smartlab = get_dividend_history_smartlab(ticker)
+        if smartlab is None:
+            if result is None:
+                _DIV_UNAVAILABLE.add(ticker)
             return []
+        result = smartlab
 
-        result = [dict(zip(columns, row)) for row in rows]
-        # Сортируем по дате реестра (новые первыми) и берём 5 штук
-        result.sort(key=lambda x: x.get("registryclosedate", ""), reverse=True)
-        return result[:5]
+    # Сортируем по дате реестра (новые первыми) и берём 5 штук
+    result.sort(key=lambda x: x.get("registryclosedate") or "", reverse=True)
+    return result[:5]
 
-    except Exception as exc:
-        logger.error("Ошибка разбора дивидендов %s: %s", ticker, exc, exc_info=True)
-        return []
+
+def dividends_unavailable(ticker: str) -> bool:
+    """True — в этом прогоне ни ISS, ни smart-lab не отдали дивиденды тикера."""
+    return ticker in _DIV_UNAVAILABLE
 
 
 def get_upcoming_dividends(tickers: list[str]) -> dict[str, dict[str, Any]]:
@@ -380,11 +401,13 @@ def get_upcoming_dividends(tickers: list[str]) -> dict[str, dict[str, Any]]:
     today_str = today_msk().strftime("%Y-%m-%d")
 
     def _fetch(ticker: str) -> tuple[str, dict | None]:
-        for d in get_dividends(ticker):
-            ex_dt = d.get("registryclosedate") or ""
-            if ex_dt >= today_str:
-                return ticker, {"ex_date": ex_dt, "amount": d.get("value")}
-        return ticker, None
+        # get_dividends отдаёт новые первыми — при двух объявленных будущих
+        # отсечках нужна БЛИЖАЙШАЯ, а не самая поздняя
+        future = [d for d in get_dividends(ticker) if (d.get("registryclosedate") or "") >= today_str]
+        if not future:
+            return ticker, None
+        d = min(future, key=lambda x: x["registryclosedate"])
+        return ticker, {"ex_date": d["registryclosedate"], "amount": d.get("value")}
 
     result: dict[str, dict[str, Any]] = {}
     with ThreadPoolExecutor(max_workers=8) as ex:

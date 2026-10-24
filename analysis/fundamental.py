@@ -19,6 +19,11 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
+# Сектора, где долг/EBITDA не имеет смысла: у банка заёмные средства — это
+# сырьё бизнеса, а не долговая нагрузка, EBITDA не считается. В данных у них
+# стоит 0.0, что раньше давало бесплатные 20 баллов из 100 (SBER, VTBR, MOEX).
+_DEBT_NOT_APPLICABLE_SECTORS = frozenset({"banking", "finance"})
+
 # Числовые поля, обязательные для скоринга (div_yield добавляется в рантайме)
 _REQUIRED_NUMERIC = ("pe_ratio", "debt_ebitda", "roe_pct", "net_margin_pct")
 
@@ -143,8 +148,14 @@ def _merge_auto_fundamentals(manual: dict[str, Any]) -> dict[str, Any]:
             merged[ticker] = entry
             continue
         combined = {**entry, **{k: v for k, v in fresh.items() if v is not None}}
-        if fresh.get("last_updated"):
+        # Дата свежести переносится, только если авто-слой дал P/E — главный
+        # мультипликатор скора. Иначе запись «капитализация и больше ничего»
+        # (SNGS, 2026-10) помечала бы свежими ручные P/E/ROE полугодовой
+        # давности, и защита is_fund_stale молча обходилась бы.
+        if fresh.get("last_updated") and fresh.get("pe_ratio") is not None:
             combined["last_updated"] = fresh["last_updated"]
+        else:
+            combined["last_updated"] = entry.get("last_updated")
         merged[ticker] = combined
         updated_tickers += 1
 
@@ -240,10 +251,14 @@ def score_fundamental(
         pe_score = max(0.0, min(1.0, (3.0 - ratio) / 2.5))
     score += 20 * pe_score * rate_squeeze
 
-    # 2. Долг/EBITDA (вес 20) — идеал < 1x, красный флаг > 3x
-    debt = float(data.get("debt_ebitda") or 0.0)
-    debt_score = max(0.0, 1.0 - debt / 3.0)
-    score += 20 * min(debt_score, 1.0)
+    # 2. Долг/EBITDA (вес 20) — идеал < 1x, красный флаг > 3x.
+    # Для финансового сектора метрика неприменима — компонент пропускается,
+    # а остальные 80 баллов масштабируются до 100 (см. конец функции).
+    debt_applicable = sector not in _DEBT_NOT_APPLICABLE_SECTORS
+    if debt_applicable:
+        debt = float(data.get("debt_ebitda") or 0.0)
+        debt_score = max(0.0, 1.0 - debt / 3.0)
+        score += 20 * min(debt_score, 1.0)
 
     # 3. Дивидендная доходность (вес 20) — единственный канал учёта ставки ЦБ
     # в этой метрике: порог "хорошей" доходности растёт со ставкой (конкуренция
@@ -274,4 +289,6 @@ def score_fundamental(
     margin_score = min(max(margin, 0.0) / 20.0, 1.0)
     score += 10 * margin_score
 
+    if not debt_applicable:
+        score = score * 100.0 / 80.0
     return round(min(score, 100.0), 1)

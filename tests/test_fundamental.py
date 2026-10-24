@@ -197,3 +197,36 @@ def test_merge_auto_refreshes_staleness(monkeypatch):
     )
     merged = fund._merge_auto_fundamentals(manual)["SBER"]
     assert fund.is_fund_stale(merged) is False
+
+
+def test_merge_auto_without_pe_keeps_manual_date(monkeypatch):
+    """
+    Авто-запись без P/E (у SNGS был только market_cap) не должна помечать
+    свежими старые ручные мультипликаторы — иначе is_fund_stale обходится.
+    """
+    import analysis.fundamental as fund
+
+    manual = {"SNGS": {"pe_ratio": 2.8, "sector": "oil_gas", "last_updated": "2024-01-01"}}
+    monkeypatch.setattr(
+        "data.fundamentals_parser.load_auto_fundamentals",
+        lambda: {"SNGS": {"market_cap_bln_rub": 915.0, "last_updated": today_msk().isoformat()}},
+    )
+    merged = fund._merge_auto_fundamentals(manual)["SNGS"]
+    assert merged["market_cap_bln_rub"] == 915.0
+    assert merged["last_updated"] == "2024-01-01"
+    assert fund.is_fund_stale(merged) is True
+
+
+def test_debt_ignored_for_financial_sector():
+    """У банков долг/EBITDA неприменим: 0.0 в данных не даёт бесплатных баллов."""
+    medians = {"banking": {"pe": 5.0, "roe": 20.0}}
+    zero_debt = score_fundamental(_good_entry(debt_ebitda=0.0, div_yield_pct=0.0), medians)
+    high_debt = score_fundamental(_good_entry(debt_ebitda=9.0, div_yield_pct=0.0), medians)
+    assert zero_debt == high_debt
+    # без долга остальные 80 баллов масштабируются к 100: тот же профиль
+    # у нефинансовой бумаги с нулевым долгом получает ровно 20 сверху
+    as_metals = score_fundamental(
+        _good_entry(sector="metals", debt_ebitda=9.0, div_yield_pct=0.0),
+        {"metals": {"pe": 5.0, "roe": 20.0}},
+    )
+    assert zero_debt == round(as_metals * 100 / 80, 1)

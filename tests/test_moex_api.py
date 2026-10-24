@@ -152,3 +152,32 @@ def test_get_candles_empty_payload(monkeypatch):
 
     monkeypatch.setattr(api, "_get", lambda *a, **kw: _candles_payload([]))
     assert api.get_candles("SBER", from_date="2026-09-05").empty
+
+
+def test_get_dividends_falls_back_to_smartlab_when_iss_section_missing(monkeypatch):
+    """ISS отдаёт карточку бумаги без секции dividends (так с 2026-10) → smart-lab."""
+    import data.dividend_calendar as dc
+    monkeypatch.setattr(moex_api, "_get", lambda url, params=None: {"description": {}, "boards": {}})
+    monkeypatch.setattr(dc, "get_dividend_history_smartlab",
+                        lambda t: [{"registryclosedate": "2026-07-20", "value": 37.64}])
+    assert moex_api.get_dividends("SBER") == [{"registryclosedate": "2026-07-20", "value": 37.64}]
+    assert moex_api.dividends_unavailable("SBER") is False
+
+
+def test_get_dividends_marks_unavailable_when_all_sources_fail(monkeypatch):
+    import data.dividend_calendar as dc
+    monkeypatch.setattr(moex_api, "_get", lambda url, params=None: None)
+    monkeypatch.setattr(dc, "get_dividend_history_smartlab", lambda t: None)
+    monkeypatch.setattr(moex_api, "_DIV_UNAVAILABLE", set())
+    assert moex_api.get_dividends("ZZZZ") == []
+    assert moex_api.dividends_unavailable("ZZZZ") is True
+
+
+def test_upcoming_dividends_picks_nearest_future_cutoff(monkeypatch):
+    from datetime import timedelta
+    from config import today_msk
+    near = (today_msk() + timedelta(days=10)).isoformat()
+    far = (today_msk() + timedelta(days=100)).isoformat()
+    rows = [[far, 20.0], [near, 10.0]]
+    monkeypatch.setattr(moex_api, "_get", lambda url, params=None: _dividends_response(rows))
+    assert moex_api.get_upcoming_dividends(["SBER"]) == {"SBER": {"ex_date": near, "amount": 10.0}}

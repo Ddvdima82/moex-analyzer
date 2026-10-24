@@ -114,3 +114,66 @@ def test_network_failure_returns_empty(monkeypatch):
 
     monkeypatch.setattr(dc.requests, "get", _boom)
     assert get_upcoming_dividends_smartlab(["SBER"]) == {}
+
+
+# ── История выплат с /q/{ticker}/dividend/ ──────────────────────────────────
+_HISTORY_PAGE = """
+<table class="simple-little-table financials dividends sort-table">
+<tr><td colspan="7"><h2>Выплаченные дивиденды Сбербанк</h2></td></tr>
+<tr><th>Тикер</th><th exclude="П">дата T-1</th><th class="active desc">дата отсечки</th>
+<th>Период</th><th exclude="П">дивиденд</th><th>Цена акции</th><th>Див.<br/>доходность</th></tr>
+<tr><td>SBER</td><td>17.07.2026</td><td>20.07.2026</td><td>2025 год</td><td>37,64₽</td><td>277,43</td><td>13,6%</td></tr>
+<tr><td>SBERP</td><td>17.07.2026</td><td>20.07.2026</td><td>2025 год</td><td>37,64₽</td><td>279,81</td><td>13,5%</td></tr>
+<tr><td>SBER</td><td>17.07.2025</td><td>18.07.2025</td><td>2024 год</td><td>34,84₽</td><td>325,92</td><td>10,7%</td></tr>
+</table>
+<table class="simple-little-table financials dividends"><tr><th></th><th>2025</th></tr></table>
+"""
+
+
+def test_history_parses_payouts_for_exact_ticker():
+    from data.dividend_calendar import _parse_dividend_history_html
+    assert _parse_dividend_history_html(_HISTORY_PAGE, "SBER") == [
+        {"registryclosedate": "2026-07-20", "value": 37.64},
+        {"registryclosedate": "2025-07-18", "value": 34.84},
+    ]
+
+
+_EXPECTED_TABLE = """
+<table class="simple-little-table financials dividends sort-table">
+<tr><td colspan="7"><h2>Ожидаемые дивиденды Сбербанк</h2></td></tr>
+<tr><th>Тикер</th><th>дата T-1</th><th>дата отсечки</th><th>Период</th><th>дивиденд</th><th>Цена акции</th><th>Див.<br/>доходность</th></tr>
+<tr><td>SBER</td><td>08.12.2026</td><td>09.12.2026</td><td>3кв 2026</td><td>5₽</td><td>290</td><td>1,7%</td></tr>
+</table>
+"""
+
+
+def test_history_merges_expected_and_paid_tables():
+    """При объявленной выплате первой идёт таблица «Ожидаемые» — история из второй не теряется."""
+    from data.dividend_calendar import _parse_dividend_history_html
+    payouts = _parse_dividend_history_html(_EXPECTED_TABLE + _HISTORY_PAGE, "SBER")
+    assert [p["registryclosedate"] for p in payouts] == ["2026-12-09", "2026-07-20", "2025-07-18"]
+
+
+def test_history_no_payouts_is_empty_not_none():
+    from data.dividend_calendar import _parse_dividend_history_html
+    assert _parse_dividend_history_html(_HISTORY_PAGE, "YDEX") == []
+
+
+def test_history_unknown_markup_is_none():
+    from data.dividend_calendar import _parse_dividend_history_html
+    assert _parse_dividend_history_html("<table><tr><th>что-то</th></tr></table>", "SBER") is None
+
+
+def test_history_network_failure_is_none_and_cached(monkeypatch):
+    import data.dividend_calendar as dc
+    calls = []
+
+    def boom(*a, **kw):
+        calls.append(1)
+        raise ConnectionError("нет сети")
+
+    monkeypatch.setattr(dc.requests, "get", boom)
+    monkeypatch.setattr(dc, "_HISTORY_CACHE", {})
+    assert dc.get_dividend_history_smartlab("SBER") is None
+    assert dc.get_dividend_history_smartlab("SBER") is None
+    assert len(calls) == 1                     # упавший источник не дёргаем повторно

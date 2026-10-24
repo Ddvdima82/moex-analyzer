@@ -75,7 +75,7 @@ def _process_ticker(
     чтобы пайплайн собрал сводку и тихая деградация была видимой.
     Вызывается из пула потоков — читает только разделяемые данные, не пишет.
     """
-    from data.moex_api import calc_div_yield
+    from data.moex_api import calc_div_yield, dividends_unavailable
     from data.history_cache import get_history_cached
     from analysis.fundamental import is_fund_stale, score_fundamental
     from analysis.technical import (
@@ -88,7 +88,7 @@ def _process_ticker(
     from scoring.final_score import build_stock_result
 
     meta = {"tech_fallback": False, "fund_neutral": False,
-            "fund_stale": False, "sent_fallback": False}
+            "fund_stale": False, "sent_fallback": False, "div_unavailable": False}
 
     # 1. Технический анализ (история за 260 торговых дней)
     try:
@@ -118,6 +118,11 @@ def _process_ticker(
         fund_data = fundamentals.get(ticker, {}).copy()
         if fund_data:
             trailing_yield = calc_div_yield(ticker, current_price)
+            # 0.0 от упавших источников ≠ «бумага без дивидендов»: скор при этом
+            # недосчитывает до 20 баллов — делаем это видимым в сводке прогона
+            if dividends_unavailable(ticker):
+                logger.warning("Дивиденды %s недоступны (ISS и smart-lab) — доходность считается 0", ticker)
+                meta["div_unavailable"] = True
             forward_yield = 0.0
             if upcoming_div:
                 fund_data["ex_date"] = upcoming_div.get("ex_date")
@@ -280,7 +285,7 @@ def run_pipeline() -> tuple[list[dict], dict]:
     logger.info("=== ШАГ 4: Анализ %d тикеров (%d воркеров) ===", len(worklist), TICKER_MAX_WORKERS)
     results: list[dict] = []
     summary = {"tech_fallback": 0, "fund_neutral": 0, "fund_stale": 0,
-               "sent_fallback": 0, "errors": 0}
+               "sent_fallback": 0, "div_unavailable": 0, "errors": 0}
 
     with ThreadPoolExecutor(max_workers=TICKER_MAX_WORKERS) as ex:
         futures = {
@@ -300,8 +305,8 @@ def run_pipeline() -> tuple[list[dict], dict]:
                 summary["errors"] += 1
                 continue
             results.append(result)
-            for key in ("tech_fallback", "fund_neutral", "fund_stale", "sent_fallback"):
-                if meta[key]:
+            for key in ("tech_fallback", "fund_neutral", "fund_stale", "sent_fallback", "div_unavailable"):
+                if meta.get(key):
                     summary[key] += 1
 
     results.sort(key=lambda x: -x["final_score"])
@@ -309,10 +314,11 @@ def run_pipeline() -> tuple[list[dict], dict]:
     # 5. Сводка прогона — делает тихую деградацию видимой
     logger.info(
         "=== Pipeline завершён: обработано %d | пропущено(нет цены) %d | "
-        "ошибок %d | фолбэк техн=%d фундам=%d устар.фундам=%d сентимент=%d ===",
+        "ошибок %d | фолбэк техн=%d фундам=%d устар.фундам=%d сентимент=%d "
+        "дивиденды недоступны=%d ===",
         len(results), skipped_no_price, summary["errors"],
         summary["tech_fallback"], summary["fund_neutral"],
-        summary["fund_stale"], summary["sent_fallback"],
+        summary["fund_stale"], summary["sent_fallback"], summary["div_unavailable"],
     )
     return results, macro
 
