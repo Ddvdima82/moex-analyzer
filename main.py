@@ -226,9 +226,11 @@ def run_pipeline() -> tuple[list[dict], dict]:
 
     # 2.6. Режим рынка по IMOEX (bear → выше порог входа в BUY).
     # Ошибка выборки → neutral: фильтр просто не вмешивается.
-    from data.moex_api import get_index_history
+    from data.moex_api import append_live_index_bar, get_index_history
     from analysis.technical import compute_market_regime
-    regime_info = compute_market_regime(get_index_history())
+    # + бар текущей сессии: /history даёт только закрытые дни, и без него
+    # режим считался по вчерашнему закрытию индекса
+    regime_info = compute_market_regime(append_live_index_bar(get_index_history()))
     market_regime = regime_info["regime"]
     market_trend_strength = regime_info["trend_strength"]
     macro["market_regime"] = market_regime

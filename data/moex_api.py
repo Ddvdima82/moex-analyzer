@@ -336,6 +336,46 @@ def get_index_history(secid: str = "IMOEX", days: int = 260) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def append_live_index_bar(df: pd.DataFrame, secid: str = "IMOEX") -> pd.DataFrame:
+    """
+    Дописывает к истории индекса бар текущей сессии из marketdata
+    (CURRENTVALUE/HIGH/LOW), если его TRADEDATE новее последнего бара истории.
+
+    /history публикует бар только после закрытия, поэтому дневной прогон
+    считал режим рынка по ВЧЕРАШНЕМУ закрытию: 2026-10-27 IMOEX днём был 2526
+    (выше SMA200 2508, бычий режим), а фильтр видел 2491.83 и держал порог BUY
+    поднятым как в медвежьем. В выходные индекс не считается — TRADEDATE
+    marketdata совпадает с последним баром, и ничего не дописывается.
+    Любая ошибка → df без изменений.
+    """
+    if df is None or df.empty or "TRADEDATE" not in df.columns:
+        return df
+    data = _get(
+        f"{MOEX_BASE_URL}/engines/stock/markets/index/boards/SNDX/securities/{secid}.json",
+        {"iss.meta": "off", "iss.only": "marketdata"},
+    )
+    try:
+        md = (data or {}).get("marketdata", {})
+        row = dict(zip(md.get("columns", []), (md.get("data") or [[]])[0]))
+        value, trade_date = row.get("CURRENTVALUE"), row.get("TRADEDATE")
+        if not value or not trade_date:
+            return df
+        trade_ts = pd.to_datetime(trade_date)
+        if trade_ts <= df["TRADEDATE"].max():
+            return df
+        live = pd.DataFrame([{
+            "TRADEDATE": trade_ts,
+            "CLOSE": float(value),
+            "HIGH": float(row.get("HIGH") or value),
+            "LOW": float(row.get("LOW") or value),
+        }])
+        logger.info("Индекс %s: дописан бар текущей сессии %s = %s", secid, trade_date, value)
+        return pd.concat([df, live], ignore_index=True)
+    except Exception as exc:
+        logger.warning("Текущее значение индекса %s недоступно: %s", secid, exc)
+        return df
+
+
 # ──────────────────────────────────────────────────────────────
 # Дивиденды
 # ──────────────────────────────────────────────────────────────

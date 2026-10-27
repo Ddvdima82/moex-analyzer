@@ -181,3 +181,36 @@ def test_upcoming_dividends_picks_nearest_future_cutoff(monkeypatch):
     rows = [[far, 20.0], [near, 10.0]]
     monkeypatch.setattr(moex_api, "_get", lambda url, params=None: _dividends_response(rows))
     assert moex_api.get_upcoming_dividends(["SBER"]) == {"SBER": {"ex_date": near, "amount": 10.0}}
+
+
+def _index_md(trade_date, value=2526.0):
+    return {"marketdata": {
+        "columns": ["SECID", "CURRENTVALUE", "HIGH", "LOW", "TRADEDATE"],
+        "data": [["IMOEX", value, 2530.5, 2486.2, trade_date]],
+    }}
+
+
+def _index_hist():
+    import pandas as pd
+    return pd.DataFrame({
+        "TRADEDATE": pd.to_datetime(["2026-10-23", "2026-10-26"]),
+        "CLOSE": [2469.4, 2491.8], "HIGH": [2480.0, 2495.0], "LOW": [2460.0, 2470.0],
+    })
+
+
+def test_live_index_bar_appended_for_new_session(monkeypatch):
+    monkeypatch.setattr(moex_api, "_get", lambda url, params=None: _index_md("2026-10-27"))
+    out = moex_api.append_live_index_bar(_index_hist())
+    assert len(out) == 3
+    assert out.iloc[-1]["CLOSE"] == 2526.0 and out.iloc[-1]["HIGH"] == 2530.5
+
+
+def test_live_index_bar_skipped_when_session_already_in_history(monkeypatch):
+    """Выходные: индекс не считается, TRADEDATE marketdata = последний бар."""
+    monkeypatch.setattr(moex_api, "_get", lambda url, params=None: _index_md("2026-10-26"))
+    assert len(moex_api.append_live_index_bar(_index_hist())) == 2
+
+
+def test_live_index_bar_network_failure_keeps_history(monkeypatch):
+    monkeypatch.setattr(moex_api, "_get", lambda url, params=None: None)
+    assert len(moex_api.append_live_index_bar(_index_hist())) == 2

@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from config import DASHBOARD_FILE, today_msk
+from config import DASHBOARD_FILE, MSK, today_msk
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,9 @@ def gather_dashboard_data(
     }
 
     return {
-        "generated": today_msk().strftime("%d.%m.%Y"),
+        # С временем: дашборд — снимок на момент прогона, и одной даты мало,
+        # чтобы понять, насколько устарели цены относительно текущей сессии
+        "generated": datetime.now(MSK).strftime("%d.%m.%Y %H:%M МСК"),
         "run_date": run_date,
         "stats": stats,
         "latest": latest,
@@ -360,7 +363,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <header>
     <div><h1>MOEX Анализатор</h1>
       <div class="sub">Прогон <b id="runDate"></b> · топ-20 акций Мосбиржи</div></div>
-    <div class="sub">Сгенерировано <span id="gen"></span></div>
+    <div class="sub">Сгенерировано <span id="gen"></span><br>цены — снимок MOEX ISS на момент прогона (задержка ~15 мин)</div>
   </header>
 
   <details class="legend">
