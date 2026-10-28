@@ -56,4 +56,4 @@ Pipeline orchestrated by [main.py](main.py) `run_pipeline()`: fetches fundamenta
 
 ## CI
 
-[.github/workflows/weekly_analysis.yml](.github/workflows/weekly_analysis.yml): cron `0 7 * * *` (10:00 MSK, daily — weekends included, since MOEX runs weekend sessions and `get_candles` supplies those bars) + manual `workflow_dispatch`. 15-min timeout. Uploads `logs/` on failure, `reports/` on success.
+[.github/workflows/weekly_analysis.yml](.github/workflows/weekly_analysis.yml): cron `0 3 * * *` (06:00 MSK, daily — weekends included, since MOEX runs weekend sessions and `get_candles` supplies those bars; early because GitHub delays scheduled runs by hours — at 07:00 UTC they actually started 11:50–14:18 UTC, so the dashboard only refreshed by evening) plus `0 17 * * 5` (Friday report slot) + manual `workflow_dispatch`. 15-min timeout. Uploads `logs/` on failure, `reports/` on success.
